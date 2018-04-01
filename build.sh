@@ -59,7 +59,7 @@ case $1 in
   cp -r mod/lib/modules/$SRC SD/BPI-ROOT/lib/modules/$SRC
   #set +x
   #ls SD/BPI-ROOT/lib/modules/
-  filename=bpi-r2-4.9.tar.gz
+  filename=bpi-r2-$kernver.tar.gz
   (cd SD; tar -czf $filename BPI-BOOT BPI-ROOT;md5sum $filename > $filename.md5; ls -lh $filename)
 ;;
 "build")
