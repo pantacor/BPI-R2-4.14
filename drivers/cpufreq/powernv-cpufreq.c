@@ -260,9 +260,9 @@ static int init_powernv_pstates(void)
 
 		if (id == pstate_max)
 			powernv_pstate_info.max = i;
-		else if (id == pstate_nominal)
+		if (id == pstate_nominal)
 			powernv_pstate_info.nominal = i;
-		else if (id == pstate_min)
+		if (id == pstate_min)
 			powernv_pstate_info.min = i;
 	}
 
@@ -647,8 +647,14 @@ static int powernv_cpufreq_target_index(struct cpufreq_policy *policy,
 	if (unlikely(rebooting) && new_index != get_nominal_index())
 		return 0;
 
-	if (!throttled)
+	if (!throttled) {
+		/* we don't want to be preempted while
+		 * checking if the CPU frequency has been throttled
+		 */
+		preempt_disable();
 		powernv_cpufreq_throttle_check(NULL);
+		preempt_enable();
+	}
 
 	cur_msec = jiffies_to_msecs(get_jiffies_64());
 

@@ -130,14 +130,14 @@ static long vhost_get_vring_endian(struct vhost_virtqueue *vq, u32 idx,
 
 static void vhost_init_is_le(struct vhost_virtqueue *vq)
 {
-	if (vhost_has_feature(vq, VIRTIO_F_VERSION_1))
-		vq->is_le = true;
+	vq->is_le = vhost_has_feature(vq, VIRTIO_F_VERSION_1)
+		|| virtio_legacy_is_little_endian();
 }
 #endif /* CONFIG_VHOST_CROSS_ENDIAN_LEGACY */
 
 static void vhost_reset_is_le(struct vhost_virtqueue *vq)
 {
-	vq->is_le = virtio_legacy_is_little_endian();
+	vhost_init_is_le(vq);
 }
 
 struct vhost_flush_struct {
@@ -849,7 +849,7 @@ static void vhost_dev_lock_vqs(struct vhost_dev *d)
 {
 	int i = 0;
 	for (i = 0; i < d->nvqs; ++i)
-		mutex_lock(&d->vqs[i]->mutex);
+		mutex_lock_nested(&d->vqs[i]->mutex, i);
 }
 
 static void vhost_dev_unlock_vqs(struct vhost_dev *d)
@@ -1713,10 +1713,8 @@ int vhost_vq_init_access(struct vhost_virtqueue *vq)
 	int r;
 	bool is_le = vq->is_le;
 
-	if (!vq->private_data) {
-		vhost_reset_is_le(vq);
+	if (!vq->private_data)
 		return 0;
-	}
 
 	vhost_init_is_le(vq);
 
