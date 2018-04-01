@@ -53,9 +53,14 @@ case $1 in
   mkdir -p SD/BPI-BOOT/bananapi/bpi-r2/linux/
   cp uImage SD/BPI-BOOT/bananapi/bpi-r2/linux/
   mkdir -p SD/BPI-ROOT/lib/modules/
-  cp -r mod/lib/modules/4.9.44-bpi-r2+ SD/BPI-ROOT/lib/modules/
+  rm -r SD/BPI-ROOT/lib/modules/*
+  #set -x
+  SRC=$(ls -1t mod/lib/modules/ | head -1)
+  cp -r mod/lib/modules/$SRC SD/BPI-ROOT/lib/modules/$SRC
+  #set +x
+  #ls SD/BPI-ROOT/lib/modules/
   filename=bpi-r2-4.9.tar.gz
-  (cd SD; tar -czf $filename BPI-BOOT BPI-ROOT;md5sum $filename > $filename.md5;ls -lh $filename)
+  (cd SD; tar -czf $filename BPI-BOOT BPI-ROOT;md5sum $filename > $filename.md5; ls -lh $filename)
 ;;
 "build")
   make ${CFLAGS}
