@@ -15,11 +15,13 @@ export LOCALVERSION="-${gitbranch}"
 export KDIR=$(pwd)
 
 case $1 in
+"defconfig")
+  nano arch/arm/configs/mt7623n_evb_fwu_defconfig
+;;
 "importconfig")
   echo "importconfig"
-  #make mt7623n_evb_fwu_defconfig
-  cp arch/arm/configs/mt7623n_evb_fwu_defconfig .config
-  #make mt7623n_evb_bpi_defconfig
+  #cp arch/arm/configs/mt7623n_evb_fwu_defconfig .config
+  make mt7623n_evb_fwu_defconfig
   ;;
 "config")
   make menuconfig
@@ -31,6 +33,12 @@ case $1 in
   cd DX910-SW-99002-r8p1-00rel0/driver/src/devicedrv/mali/
   make clean && cd -
   ;;
+"dts")
+  nano arch/arm/boot/dts/mt7623n-bananapi-bpi-r2.dts
+;;
+"dtsi")
+  nano arch/arm/boot/dts/mt7623.dtsi
+;;
 "cryptodev")
   echo "cryptodev"
   cd cryptodev-linux-1.9
