@@ -10,6 +10,8 @@ kernver=$(make kernelversion)
 gitbranch=$(git rev-parse --abbrev-ref HEAD)
 d=$(date +%Y%m%d)
 gitrev=$(git rev-parse --short --verify $gitbranch)
+gittag=$(git describe 2>/dev/null | awk -F- '{printf("-%05d-%s", $(NF-1),$(NF))}')
+ver=${kernver}-${gitbranch}${gittag}
 export LOCALVERSION="-${gitbranch}"
 
 export KDIR=$(pwd)
@@ -41,6 +43,8 @@ case $1 in
 ;;
 "cryptodev")
   echo "cryptodev"
+  export CFLAGS=-I${KDIR}/openssl-1.1.0f/debian/tmp/usr/include/arm-linux-gnueabihf
+  export LDFLAGS+=' -L${KDIR}/openssl-1.1.0f/debian/tmp/usr/lib/arm-linux-gnueabihf'
   cd cryptodev-linux-1.9
   make KERNEL_DIR=${KDIR}
   cd tests
@@ -86,14 +90,37 @@ case $1 in
   filename=bpi-r2-$kernver.tar.gz
   (cd SD; tar -czf $filename BPI-BOOT BPI-ROOT;md5sum $filename > $filename.md5; ls -lh $filename)
 ;;
+"deb")
+  echo "deb package ${ver}"
+  # uImage_4.9.44-4.9_patched-00030-g328e50a6cb09
+  mkdir -p DEBIAN/bananapi-r2-image/boot/bananapi/bpi-r2/linux/
+  mkdir -p DEBIAN/bananapi-r2-image/lib/modules/
+  if test -e ./uImage && test -d mod/lib/modules/${ver}; then
+     fakeroot cp ./uImage DEBIAN/bananapi-r2-image/boot/bananapi/bpi-r2/linux/uImage_${ver}
+     fakeroot cp -r mod/lib/modules/${ver} DEBIAN/bananapi-r2-image/lib/modules/
+     fakeroot rm DEBIAN/bananapi-r2-image/lib/modules/${ver}/{build,source}
+     fakeroot mkdir DEBIAN/bananapi-r2-image/lib/modules/${ver}/kernel/extras
+     fakeroot cp cryptodev-linux-1.9/cryptodev.ko DEBIAN/bananapi-r2-image/lib/modules/${ver}/kernel/extras
+     fakeroot sed -i "s/myversion/${kernver}/" DEBIAN/bananapi-r2-image/DEBIAN/control
+     fakeroot sed -i "s/linux image/linux image ${kernver}/" DEBIAN/bananapi-r2-image/DEBIAN/control
+     cd DEBIAN
+     fakeroot dpkg-deb --build bananapi-r2-image ../DEBIAN
+     ls -lh *.deb
+ else
+     echo "first build kernel ${ver}"
+     echo "eg: ./build kernel"
+     echo "eg: ./build cryptodev"
+ fi
+;;
 "kernel")
+  echo "kernel"
   make ${CFLAGS}
   if [[ $? -eq 0 ]];then
     cat arch/arm/boot/zImage arch/arm/boot/dts/mt7623n-bananapi-bpi-r2.dtb > arch/arm/boot/zImage-dtb
     mkimage -A arm -O linux -T kernel -C none -a 80008000 -e 80008000 -n "Linux Kernel $kernver" -d arch/arm/boot/zImage-dtb ./uImage
     make modules_install
   fi
-  ;;
+;;
 *)
 echo "This tool support following building command:"
 echo "--------------------------------------------------------------------------------"
