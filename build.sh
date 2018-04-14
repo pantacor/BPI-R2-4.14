@@ -7,55 +7,56 @@ export INSTALL_MOD_PATH=$(pwd)/mod/
 mkdir -p $INSTALL_MOD_PATH
 
 kernver=$(make kernelversion)
+kernbranch=$(make kernelversion | cut -d . -f 1,2)
 gitbranch=$(git rev-parse --abbrev-ref HEAD)
-d=$(date +%Y%m%d)
 gitrev=$(git rev-parse --short --verify $gitbranch)
 gittag=$(git describe 2>/dev/null | awk -F- '{printf("-%05d-%s", $(NF-1),$(NF))}')
 ver=${kernver}-${gitbranch}${gittag}
 export LOCALVERSION="-${gitbranch}"
-
 export KDIR=$(pwd)
 
 case $1 in
 "defconfig")
+  echo "defconfig"
   nano arch/arm/configs/mt7623n_evb_fwu_defconfig
 ;;
 "importconfig")
   echo "importconfig"
-  #cp arch/arm/configs/mt7623n_evb_fwu_defconfig .config
-  make mt7623n_evb_fwu_defconfig
+  cp arch/arm/configs/mt7623n_evb_fwu_defconfig .config
+  ;;
+"saveconfig")
+  echo "saveconfig"
+  cp .config arch/arm/configs/mt7623n_evb_fwu_defconfig
   ;;
 "config")
   make menuconfig
   ;;
 "clean")
   make clean
-  cd cryptodev-linux-1.9
-  make clean && cd -
-  cd DX910-SW-99002-r8p1-00rel0/driver/src/devicedrv/mali/
+  cd cryptodev-linux
   make clean && cd -
   ;;
-"dts")
-  nano arch/arm/boot/dts/mt7623n-bananapi-bpi-r2.dts
-;;
-"dtsi")
-  nano arch/arm/boot/dts/mt7623.dtsi
-;;
 "cryptodev")
   echo "cryptodev"
-  export CFLAGS=-I${KDIR}/openssl-1.1.0f/debian/tmp/usr/include/arm-linux-gnueabihf
-  export LDFLAGS+=' -L${KDIR}/openssl-1.1.0f/debian/tmp/usr/lib/arm-linux-gnueabihf'
-  cd cryptodev-linux-1.9
-  make KERNEL_DIR=${KDIR}
-  cd tests
-  export CFLAGS=-I$(pwd)/openssl-1.1.0f/include/
-  export LDLIBS=-L$(pwd)/openssl-cryptodev/lib/
-  make CC=arm-linux-gnueabihf-gcc
+  if test -d openssl-1.1.0f/debian/tmp/usr/include/arm-linux-gnueabihf; then
+     export CFLAGS=-I${KDIR}/openssl-1.1.0f/debian/tmp/usr/include/arm-linux-gnueabihf
+     export LDFLAGS+=' -L${KDIR}/openssl-1.1.0f/debian/tmp/usr/lib/arm-linux-gnueabihf'
+     cd cryptodev-linux
+     make KERNEL_DIR=${KDIR}
+     cd tests
+     make CC=arm-linux-gnueabihf-gcc ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
+  else
+     echo "First build openssl"
+     echo "eg: ./build openssl"
+     echo "eg: ./build cryptodev"
+  fi
   ;;
 "openssl")
   echo openssl
+  # Update package list before, sudo apt-get update
   apt-get source openssl
   cd openssl-1.1.0f
+  head -1 debian/changelog | sed -i 's/)/+crypto)/' debian/changelog
   sed -i 's/\tdh_shlibdeps/dh_shlibdeps -l\/usr\/arm-linux-gnueabihf\/lib:$(pwd)\/debian\/libssl1.1\/usr\/lib\/arm-linux-gnueabihf/' debian/rules
   LANG=C ARCH=arm DEB_BUILD_OPTIONS=nocheck CROSS_COMPILE=arm-linux-gnueabihf- \
 	DEB_CFLAGS_APPEND='-DHAVE_CRYPTODEV -DUSE_CRYPTODEV_DIGESTS' \
@@ -81,33 +82,41 @@ case $1 in
   mkdir -p SD/BPI-BOOT/bananapi/bpi-r2/linux/
   cp uImage SD/BPI-BOOT/bananapi/bpi-r2/linux/
   mkdir -p SD/BPI-ROOT/lib/modules/
-  rm -r SD/BPI-ROOT/lib/modules/*
-  #set -x
-  SRC=$(ls -1t mod/lib/modules/ | head -1)
-  cp -r mod/lib/modules/$SRC SD/BPI-ROOT/lib/modules/$SRC
-  #set +x
-  #ls SD/BPI-ROOT/lib/modules/
-  filename=bpi-r2-$kernver.tar.gz
-  (cd SD; tar -czf $filename BPI-BOOT BPI-ROOT;md5sum $filename > $filename.md5; ls -lh $filename)
+  cp -r mod/lib/modules/ SD/BPI-ROOT/lib/modules/
+  filename=bpi-r2-4.9.tar.gz
+  (cd SD; tar -czf $filename BPI-BOOT BPI-ROOT;md5sum $filename > $filename.md5;ls -lh $filename)
 ;;
 "deb")
   echo "deb package ${ver}"
   # uImage_4.9.44-4.9_patched-00030-g328e50a6cb09
-  mkdir -p DEBIAN/bananapi-r2-image/boot/bananapi/bpi-r2/linux/
-  mkdir -p DEBIAN/bananapi-r2-image/lib/modules/
+  mkdir -p debian/bananapi-r2-image/boot/bananapi/bpi-r2/linux/
+  mkdir -p debian/bananapi-r2-image/lib/modules/
+  rm debian/bananapi-r2-image/boot/bananapi/bpi-r2/linux/*
+  rm -rf debian/bananapi-r2-image/lib/modules/*
   if test -e ./uImage && test -d mod/lib/modules/${ver}; then
-     fakeroot cp ./uImage DEBIAN/bananapi-r2-image/boot/bananapi/bpi-r2/linux/uImage_${ver}
-     fakeroot cp -r mod/lib/modules/${ver} DEBIAN/bananapi-r2-image/lib/modules/
-     fakeroot rm DEBIAN/bananapi-r2-image/lib/modules/${ver}/{build,source}
-     fakeroot mkdir DEBIAN/bananapi-r2-image/lib/modules/${ver}/kernel/extras
-     fakeroot cp cryptodev-linux-1.9/cryptodev.ko DEBIAN/bananapi-r2-image/lib/modules/${ver}/kernel/extras
-     fakeroot sed -i "s/myversion/${kernver}/" DEBIAN/bananapi-r2-image/DEBIAN/control
-     fakeroot sed -i "s/linux image/linux image ${kernver}/" DEBIAN/bananapi-r2-image/DEBIAN/control
-     cd DEBIAN
-     fakeroot dpkg-deb --build bananapi-r2-image ../DEBIAN
+     cp ./uImage debian/bananapi-r2-image/boot/bananapi/bpi-r2/linux/uImage_${ver}
+     cp -r mod/lib/modules/${ver} debian/bananapi-r2-image/lib/modules/
+     rm debian/bananapi-r2-image/lib/modules/${ver}/{build,source}
+     mkdir debian/bananapi-r2-image/lib/modules/${ver}/kernel/extras
+     cp cryptodev-linux/cryptodev.ko debian/bananapi-r2-image/lib/modules/${ver}/kernel/extras
+     cat > debian/bananapi-r2-image/DEBIAN/control << EOF
+Package: bananapi-r2-image-${kernbranch}
+Version: ${kernver}-1
+Section: custom
+Priority: optional
+Architecture: armhf
+Multi-Arch: no
+Essential: no
+Maintainer: xbgmsharp@gmail.com
+Description: BPI-R2 linux image ${ver}
+EOF
+     #sed -i "s/myversion/${kernver}/" debianDEBIAN/bananapi-r2-image/DEBIAN/control
+     #sed -i "s/linux image/linux image ${kernver}/" DEBIAN/bananapi-r2-image/DEBIAN/control
+     cd debian
+     fakeroot dpkg-deb --build bananapi-r2-image ../debian
      ls -lh *.deb
  else
-     echo "first build kernel ${ver}"
+     echo "First build kernel ${ver}"
      echo "eg: ./build kernel"
      echo "eg: ./build cryptodev"
  fi
@@ -125,6 +134,7 @@ case $1 in
 echo "This tool support following building command:"
 echo "--------------------------------------------------------------------------------"
 echo "  importconfig, import default config."
+echo "  saveconfig, copy current config to default config."
 echo "  config, kernel configure."
 echo "  clean, clean all build."
 echo "  cryptodev, build cryptodev kernel module."
@@ -132,6 +142,7 @@ echo "  openssl, build openssl with cryptodev kernel engine."
 echo "  mali, build mali kernel module."
 echo "  install, copy kernel image and module into a mount SD"
 echo "  pack, create tar-archive with kernel-image and modules"
+echo "  deb, create deb-archive with kernel-image and modules"
 echo "  kernel, build kernel image and module, cryptodev, mali"
 echo "--------------------------------------------------------------------------------"
   ;;
