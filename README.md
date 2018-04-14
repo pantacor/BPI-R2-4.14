@@ -19,8 +19,8 @@ sudo apt-get install gcc-arm-linux-gnueabihf libc6-armhf-cross u-boot-tools bc m
 ## Branch details
 
 Kernel upstream + BPI-R2
-* 4.14-main
 * 4.9-main
+* 4.14-main
 * 4.16-main (currently not compiling because of wifi driver)
 
 ## Kernel version
@@ -39,7 +39,7 @@ Kernel breakdown features by version
 | Crypto   |  Y  |  Y  |  Y  |  Y  |
 | WIFI     |  Y  |  Y  |  Y  |  ?  |
 | BT       |     |     |     |     |
-| VIDEO    |  Y  |  N  |  N  |  N  |
+| VIDEO    |  Y  |  Y  |  N  |  N  |
 | AUDIO    |  Y  |  N  |  N  |  N  |
 
 kernel 4.4: https://github.com/frank-w/BPI-R2-4.4
