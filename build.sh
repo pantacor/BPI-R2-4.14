@@ -22,7 +22,8 @@ case $1 in
 ;;
 "importconfig")
   echo "importconfig"
-  cp arch/arm/configs/mt7623n_evb_fwu_defconfig .config
+  #cp arch/arm/configs/mt7623n_evb_fwu_defconfig .config
+  make mt7623n_evb_fwu_defconfig
   ;;
 "saveconfig")
   echo "saveconfig"
@@ -82,7 +83,7 @@ case $1 in
   mkdir -p SD/BPI-BOOT/bananapi/bpi-r2/linux/
   cp uImage SD/BPI-BOOT/bananapi/bpi-r2/linux/
   mkdir -p SD/BPI-ROOT/lib/modules/
-  cp -r mod/lib/modules/ SD/BPI-ROOT/lib/modules/
+  cp -r mod/lib/modules/* SD/BPI-ROOT/lib/modules/
   filename=bpi-r2-4.9.tar.gz
   (cd SD; tar -czf $filename BPI-BOOT BPI-ROOT;md5sum $filename > $filename.md5;ls -lh $filename)
 ;;
