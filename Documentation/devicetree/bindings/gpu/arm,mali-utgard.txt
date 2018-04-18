@@ -17,6 +17,7 @@ Required properties:
       + amlogic,meson8b-mali
       + amlogic,meson-gxbb-mali
       + amlogic,meson-gxl-mali
+      + mediatek,mt7623-mali
       + samsung,exynos4210-mali
       + rockchip,rk3036-mali
       + rockchip,rk3066-mali
@@ -88,6 +89,14 @@ to specify one more vendor-specific compatible, among:
   - amlogic,meson8-mali and amlogic,meson8b-mali
     Required properties:
       * resets: phandle to the reset line for the GPU
+
+  - mediatek,mt7623-mali
+     Required properties:
+      * resets: phandle to the reset line for the GPU
+      * mediatek,larb: phandle pointed to the local arbiter used to control the
+	access to external memory on the SoC.
+	see Documentation/devicetree/bindings/memory-controllers/mediatek,smi-larb.txt
+	for details
 
   - Rockchip variants:
     Required properties:
