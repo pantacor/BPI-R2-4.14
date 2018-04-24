@@ -56,7 +56,7 @@ case $1 in
   echo openssl
   # Update package list before, sudo apt-get update
   apt-get source openssl
-  cd openssl-1.1.0f
+  cd openssl-*
   head -1 debian/changelog | sed -i 's/)/+crypto)/' debian/changelog
   sed -i 's/\tdh_shlibdeps/dh_shlibdeps -l\/usr\/arm-linux-gnueabihf\/lib:$(pwd)\/debian\/libssl1.1\/usr\/lib\/arm-linux-gnueabihf/' debian/rules
   LANG=C ARCH=arm DEB_BUILD_OPTIONS=nocheck CROSS_COMPILE=arm-linux-gnueabihf- \
@@ -83,8 +83,9 @@ case $1 in
   mkdir -p SD/BPI-BOOT/bananapi/bpi-r2/linux/
   cp uImage SD/BPI-BOOT/bananapi/bpi-r2/linux/
   mkdir -p SD/BPI-ROOT/lib/modules/
+  rm -r SD/BPI-ROOT/lib/modules/*
   cp -r mod/lib/modules/* SD/BPI-ROOT/lib/modules/
-  filename=bpi-r2-4.9.tar.gz
+  filename=bpi-r2-${kernver}.tar.gz
   (cd SD; tar -czf $filename BPI-BOOT BPI-ROOT;md5sum $filename > $filename.md5;ls -lh $filename)
 ;;
 "deb")
@@ -128,6 +129,7 @@ EOF
   if [[ $? -eq 0 ]];then
     cat arch/arm/boot/zImage arch/arm/boot/dts/mt7623n-bananapi-bpi-r2.dtb > arch/arm/boot/zImage-dtb
     mkimage -A arm -O linux -T kernel -C none -a 80008000 -e 80008000 -n "Linux Kernel $kernver" -d arch/arm/boot/zImage-dtb ./uImage
+    rm -r $INSTALL_MOD_PATH/*
     make modules_install
   fi
 ;;
