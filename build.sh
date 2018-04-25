@@ -39,9 +39,9 @@ case $1 in
   ;;
 "cryptodev")
   echo "cryptodev"
-  if test -d openssl-1.1.0f/debian/tmp/usr/include/arm-linux-gnueabihf; then
-     export CFLAGS=-I${KDIR}/openssl-1.1.0f/debian/tmp/usr/include/arm-linux-gnueabihf
-     export LDFLAGS+=' -L${KDIR}/openssl-1.1.0f/debian/tmp/usr/lib/arm-linux-gnueabihf'
+  if test -d openssl-*/debian/tmp/usr/include/arm-linux-gnueabihf; then
+     export CFLAGS=-I${KDIR}/openssl-*/debian/tmp/usr/include/arm-linux-gnueabihf
+     export LDFLAGS+=' -L${KDIR}/openssl-*/debian/tmp/usr/lib/arm-linux-gnueabihf'
      cd cryptodev-linux
      make KERNEL_DIR=${KDIR}
      cd tests
@@ -55,6 +55,10 @@ case $1 in
 "openssl")
   echo openssl
   # Update package list before, sudo apt-get update
+  if [[ ! -e ./usr/bin/dh ]];then
+    echo "please install debhelper";
+    exit 1;
+  fi;
   apt-get source openssl
   cd openssl-*
   head -1 debian/changelog | sed -i 's/)/+crypto)/' debian/changelog
