@@ -55,7 +55,7 @@ case $1 in
 "openssl")
   echo openssl
   # Update package list before, sudo apt-get update
-  if [[ ! -e ./usr/bin/dh ]];then
+  if [[ ! -e /usr/bin/dh ]];then
     echo "please install debhelper";
     exit 1;
   fi;
@@ -65,7 +65,7 @@ case $1 in
   sed -i 's/\tdh_shlibdeps/dh_shlibdeps -l\/usr\/arm-linux-gnueabihf\/lib:$(pwd)\/debian\/libssl1.1\/usr\/lib\/arm-linux-gnueabihf/' debian/rules
   LANG=C ARCH=arm DEB_BUILD_OPTIONS=nocheck CROSS_COMPILE=arm-linux-gnueabihf- \
 	DEB_CFLAGS_APPEND='-DHAVE_CRYPTODEV -DUSE_CRYPTODEV_DIGESTS' \
-	DEB_CPPFLAGS_APPEND="-I$(pwd)/../cryptodev-linux-1.9" \
+	DEB_CPPFLAGS_APPEND="-I$(pwd)/../cryptodev/cryptodev-linux" \
 	dpkg-buildpackage -us -uc -aarmhf
   ;;
 "mali")
