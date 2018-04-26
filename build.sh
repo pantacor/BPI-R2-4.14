@@ -55,7 +55,7 @@ case $1 in
 "openssl")
   echo openssl
   # Update package list before, sudo apt-get update
-  if [[ ! -e ./usr/bin/dh ]];then
+  if [[ ! -e /usr/bin/dh ]];then
     echo "please install debhelper";
     exit 1;
   fi;
