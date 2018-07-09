@@ -120,3 +120,7 @@ all.config
 
 # Kdevelop4
 *.kdev4
+
+#ASN
+*.asn1.h
+*.asn1.c
