@@ -519,7 +519,6 @@
 		clock-names = "main";
 		reg-shift = <2>;
 		reg-io-width = <4>;
-		status = "disabled";
 
 		bluetooth {
 			compatible = "mediatek,mt7622-bluetooth";
