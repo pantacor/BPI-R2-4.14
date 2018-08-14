@@ -6,7 +6,10 @@ kn=$(echo $k|awk -F. '{print $1"."$2"."($3+1)}')
 kf=$(echo $k|awk -F. '{print $1"."$2"."$3"-"($3+1)}')
 #4.4.140-141
 
-wget https://cdn.kernel.org/pub/linux/kernel/v4.x/incr/patch-$kf.xz
+if [[ ! -e patch-$kf.xz ]];then
+	wget https://cdn.kernel.org/pub/linux/kernel/v4.x/incr/patch-$kf.xz
+fi
+if [[ ! -e patch-$kf.xz ]];then echo "patchfile download fail";exit 1;fi
 unxz patch-$kf.xz
 patch -p1 --dry-run < patch-$kf
 ret=$?
