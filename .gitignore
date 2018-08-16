@@ -124,3 +124,9 @@ all.config
 #ASN
 *.asn1.h
 *.asn1.c
+
+#own
+DEBIAN/
+SD/
+patch-*
+mod/
