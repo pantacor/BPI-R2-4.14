@@ -77,8 +77,13 @@ case $1 in
   ;;
 "install")
   echo "install"
-  cp uImage /media/$USER/BPI-BOOT/bananapi/bpi-r2/linux/
-  sudo cp -r mod/lib/modules/4.9.44-bpi-r2+ /media/$USER/BPI-ROOT/lib/modules/
+  fname=/media/$USER/BPI-BOOT/bananapi/bpi-r2/linux/uImage_${kernver}-main
+  if [ -e $fname ];then
+    cp $fname $fname.bak
+  fi
+  cp uImage $fname
+  sudo cp -r mod/lib/modules/${kernver}-bpi-r2-4.9-main /media/$USER/BPI-ROOT/lib/modules/
+  #sudo cp -r mod/lib/modules/${ver} /media/$USER/BPI-ROOT/lib/modules/
   sync
 ;;
 "pack")
