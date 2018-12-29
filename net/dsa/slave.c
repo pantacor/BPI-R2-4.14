@@ -1298,6 +1298,9 @@ int dsa_slave_create(struct dsa_port *port)
 	struct dsa_slave_priv *p;
 	int ret;
 
+	if (port->upstream != 255)
+		master = ds->ports[port->upstream].ethernet;
+
 	if (!ds->num_tx_queues)
 		ds->num_tx_queues = 1;
 
