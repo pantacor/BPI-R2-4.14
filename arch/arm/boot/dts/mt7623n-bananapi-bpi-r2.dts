@@ -173,19 +173,19 @@
 				port@0 {
 					reg = <0>;
 					label = "wan";
-					default_cpu = <&cpu_port1>;
+					/* default_cpu = <&cpu_port1>; */
 				};
 
 				port@1 {
 					reg = <1>;
 					label = "lan0";
-					default_cpu = <&cpu_port0>;
+					/* default_cpu = <&cpu_port0>; */
 				};
 
 				port@2 {
 					reg = <2>;
 					label = "lan1";
-					default_cpu = <&cpu_port0>;
+					/*default_cpu = <&cpu_port0>;*/
 				};
 
 				port@3 {

@@ -270,6 +270,7 @@ static int dsa_user_parse(struct dsa_port *port, u32 index,
 		cpu_port_index = be32_to_cpup(cpu_port_reg);
 	}
 	ds->ports[index].upstream = cpu_port_index;
+	printk("cpu-port-index:%d\n",cpu_port_index);
 
 	return 0;
 }

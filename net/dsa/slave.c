@@ -1298,8 +1298,10 @@ int dsa_slave_create(struct dsa_port *port)
 	struct net_device *master = ds->ports[port->upstream].ethernet;
 	int ret;
 
+	printk("[DSA] %s upstream:%d\n",port->name,port->upstream);
 	if (port->upstream != 255)
 		master = ds->ports[port->upstream].ethernet;
+	printk("[DSA] eth: %p\n",master);
 
 	if (!ds->num_tx_queues)
 		ds->num_tx_queues = 1;
