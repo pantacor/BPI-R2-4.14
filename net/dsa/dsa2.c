@@ -260,7 +260,7 @@ static int dsa_user_parse(struct dsa_port *port, u32 index,
 {
 	const unsigned int *cpu_port_reg;
 	struct device_node *cpu_port;
-	int cpu_port_index;
+	u8 cpu_port_index=255;
 
 	cpu_port = of_parse_phandle(port->dn, "default_cpu", 0);
 	if (cpu_port) {
@@ -268,8 +268,9 @@ static int dsa_user_parse(struct dsa_port *port, u32 index,
 		if (!cpu_port_reg)
 			return -EINVAL;
 		cpu_port_index = be32_to_cpup(cpu_port_reg);
-		ds->ports[index].upstream = cpu_port_index;
 	}
+	ds->ports[index].upstream = cpu_port_index;
+
 	return 0;
 }
 
