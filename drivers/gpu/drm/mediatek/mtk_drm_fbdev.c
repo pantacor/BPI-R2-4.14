@@ -11,8 +11,8 @@
 
 #include "mtk_drm_drv.h"
 #include "mtk_drm_fb.h"
-#include "mtk_drm_gem.h"
 #include "mtk_drm_fbdev.h"
+#include "mtk_drm_gem.h"
 
 #define to_drm_private(x) \
 		container_of(x, struct mtk_drm_private, fb_helper)
@@ -31,11 +31,7 @@ static struct fb_ops mtk_fbdev_ops = {
 	.fb_fillrect = drm_fb_helper_cfb_fillrect,
 	.fb_copyarea = drm_fb_helper_cfb_copyarea,
 	.fb_imageblit = drm_fb_helper_cfb_imageblit,
-	.fb_check_var = drm_fb_helper_check_var,
-	.fb_set_par = drm_fb_helper_set_par,
-	.fb_blank = drm_fb_helper_blank,
 	.fb_pan_display = drm_fb_helper_pan_display,
-	.fb_setcmap = drm_fb_helper_setcmap,
 	.fb_mmap = mtk_drm_fbdev_mmap,
 };
 
@@ -51,7 +47,7 @@ static int mtk_fbdev_probe(struct drm_fb_helper *helper,
 	unsigned int bytes_per_pixel;
 	unsigned long offset;
 	size_t size;
-	int err = 0;
+	int err;
 
 	bytes_per_pixel = DIV_ROUND_UP(sizes->surface_bpp, 8);
 
@@ -71,20 +67,20 @@ static int mtk_fbdev_probe(struct drm_fb_helper *helper,
 
 	info = drm_fb_helper_alloc_fbi(helper);
 	if (IS_ERR(info)) {
-		DRM_DEV_ERROR(dev->dev,
-			"failed to allocate framebuffer info, %d\n",
-			err);
 		err = PTR_ERR(info);
-		goto out;
+		DRM_DEV_ERROR(dev->dev,
+					  "failed to allocate framebuffer info, %d\n",
+					  err);
+		goto err_gem_free_object;
 	}
 
-	fb = mtk_drm_framebuffer_create(dev, &mode, private->fbdev_bo);
+	fb = mtk_drm_framebuffer_init(dev, &mode, private->fbdev_bo);
 	if (IS_ERR(fb)) {
-		DRM_DEV_ERROR(dev->dev,
-			"failed to allocate DRM framebuffer, %d\n",
-			err);
 		err = PTR_ERR(fb);
-		goto out;
+		DRM_DEV_ERROR(dev->dev,
+					  "failed to allocate DRM framebuffer, %d\n",
+					  err);
+		goto err_gem_release_info;
 	}
 	helper->fb = fb;
 
@@ -110,8 +106,11 @@ static int mtk_fbdev_probe(struct drm_fb_helper *helper,
 
 	return 0;
 
-out:
+err_gem_release_info:
 
+	drm_fb_helper_unregister_fbi(helper);
+
+err_gem_free_object:
 
 	mtk_drm_gem_free_object(&mtk_gem->base);
 	return err;
@@ -135,16 +134,15 @@ int mtk_fbdev_init(struct drm_device *dev)
 	ret = drm_fb_helper_init(dev, helper, dev->mode_config.num_connector);
 	if (ret < 0) {
 		DRM_DEV_ERROR(dev->dev,
-			"failed to initialize DRM FB helper, %d\n",
-			ret);
-//		goto fini;
+					  "failed to initialize DRM FB helper, %d\n",
+					  ret);
 		return ret;
 	}
 
 	ret = drm_fb_helper_single_add_all_connectors(helper);
 	if (ret < 0) {
 		DRM_DEV_ERROR(dev->dev, "failed to add connectors, %d\n", ret);
-		goto fini;
+		goto err_fini;
 	}
 
 	ret = drm_fb_helper_initial_config(helper, 32);
@@ -152,12 +150,12 @@ int mtk_fbdev_init(struct drm_device *dev)
 		DRM_DEV_ERROR(dev->dev,
 			"failed to set initial configuration, %d\n",
 			ret);
-		goto fini;
+		goto err_fini;
 	}
 
 	return 0;
 
-fini:
+err_fini:
 	drm_fb_helper_fini(helper);
 	return ret;
 }
