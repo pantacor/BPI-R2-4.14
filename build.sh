@@ -38,7 +38,9 @@ if [ ${PACKAGE_Error} == 1 ]; then exit 1; fi
 kernver=$(make kernelversion)
 #kernbranch=$(git rev-parse --abbrev-ref HEAD)
 kernbranch=$(git branch --contains $(git log -n 1 --pretty='%h') | grep -v '(HEAD' | head -1 | sed 's/^..//')
-gitbranch=$(echo $kernbranch|sed 's/^4\.[0-9]\+-//')
+gitbranch=$(echo $kernbranch|sed 's/^[45]\.[0-9]\+//'|sed 's/-rc$//')
+
+echo "kernbranch:$kernbranch,gitbranch:$gitbranch"
 
 function increase_kernel {
         #echo $kernver
@@ -81,7 +83,7 @@ function pack {
 }
 
 function upload {
-	imagename="uImage_${kernver}-${gitbranch}"
+	imagename="uImage_${kernver}${gitbranch}"
 	read -e -i $imagename -p "uImage-filename: " input
 	imagename="${input:-$imagename}"
 
@@ -91,14 +93,13 @@ function upload {
 }
 
 function install {
-
-	imagename="uImage_${kernver}-${gitbranch}"
+	imagename="uImage_${kernver}${gitbranch}"
 	read -e -i $imagename -p "Kernel-filename: " input
 	imagename="${input:-$imagename}"
 
 	echo "Name: $imagename"
 
-	dtbname="${kernver}-${gitbranch}.dtb"
+	dtbname="${kernver}${gitbranch}.dtb"
 	read -e -i $dtbname -p "DeviceTree-filename: " input
 	dtbname="${input:-$dtbname}"
 
@@ -174,8 +175,8 @@ function install {
 
 function deb {
 #set -x
-  ver=${kernver}-bpi-r2-${gitbranch}
-  uimagename=uImage_${kernver}-${gitbranch}
+  ver=${kernver}-bpi-r2${gitbranch}
+  uimagename=uImage_${kernver}${gitbranch}
   echo "deb package ${ver}"
   prepare_SD
 
@@ -288,7 +289,7 @@ function build {
 		rm ./Image 2>/dev/null
 
 		exec 3> >(tee build.log)
-		export LOCALVERSION="-${gitbranch}"
+		export LOCALVERSION="${gitbranch}"
 		make ${CFLAGS} 2>&3 #&& make modules_install 2>&3
 		ret=$?
 		exec 3>&-
@@ -297,9 +298,9 @@ function build {
 			#how to create zImage?? make zImage does not work here
 			#cat arch/arm64/boot/Image arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64.dtb > arch/arm64/boot/Image-dtb
 			#cp arch/arm64/boot/Image Image
-			mkimage -A arm -O linux -T kernel -C none -a 40080000 -e 40080000 -n "Linux Kernel $kernver-$gitbranch" -d arch/arm64/boot/Image ./uImage
+			mkimage -A arm -O linux -T kernel -C none -a 40080000 -e 40080000 -n "Linux Kernel $kernver$gitbranch" -d arch/arm64/boot/Image ./uImage
 			cp arch/arm64/boot/dts/mediatek/mt7622-bananapi-bpi-r64.dtb bpi-r64.dtb
-			#mkimage -A arm64 -O linux -T kernel -C none -a 80008000 -e 80008000 -n "Linux Kernel $kernver-$gitbranch" -d arch/arm64/boot/Image-dtb ./uImage
+			#mkimage -A arm64 -O linux -T kernel -C none -a 80008000 -e 80008000 -n "Linux Kernel $kernver$gitbranch" -d arch/arm64/boot/Image-dtb ./uImage
 		fi
 	else
 		echo "No Configfile found, Please Configure Kernel"
