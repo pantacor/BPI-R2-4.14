@@ -123,6 +123,15 @@
 		compatible = "mediatek,eth-mac";
 		reg = <1>;
 		phy-handle = <&phy5>;
+		phy-mode = "sgmii";
+
+/* Alternative, uncomment this but remove phy-handle!
+		fixed-link {
+			/* SGMII speed 1000 and 2500 Mbit is supported */
+			speed = <2500>;
+			full-duplex;
+		};
+*/
 	};
 
 	mdio-bus {
@@ -131,7 +140,6 @@
 
 		phy5: ethernet-phy@5 {
 			reg = <5>;
-			phy-mode = "sgmii";
 		};
 	};
 };

@@ -415,6 +415,12 @@
 #define SGMSYS_SGMII_MODE	0x20
 #define SGMII_REMOTE_FAULT_DIS	BIT(8)
 
+/* Register to set SGMII speed, ANA RG_ Control Signals III*/
+#define SGMSYS_ANA_RG_CS3	0x2028
+#define RG_PHY_SPEED_MASK	(BIT(2) | BIT(3))
+#define RG_PHY_SPEED_1_25G	0x0
+#define RG_PHY_SPEED_3_125G	BIT(2)
+
 /* Register to power up QPHY */
 #define SGMSYS_QPHY_PWR_STATE_CTRL 0xe8
 #define	SGMII_PHYA_PWD		BIT(4)
