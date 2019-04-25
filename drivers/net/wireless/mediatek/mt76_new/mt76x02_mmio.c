@@ -19,6 +19,7 @@
 #include <linux/irq.h>
 
 #include "mt76x02.h"
+#include "mt76x02_mcu.h"
 #include "mt76x02_trace.h"
 
 struct beacon_bc_data {
@@ -79,30 +80,30 @@ mt76x02_resync_beacon_timer(struct mt76x02_dev *dev)
 	 * Beacon timer drifts by 1us every tick, the timer is configured
 	 * in 1/16 TU (64us) units.
 	 */
-	if (dev->tbtt_count < 62)
+	if (dev->tbtt_count < 63)
 		return;
-
-	if (dev->tbtt_count >= 64) {
-		dev->tbtt_count = 0;
-		return;
-	}
 
 	/*
 	 * The updated beacon interval takes effect after two TBTT, because
 	 * at this point the original interval has already been loaded into
 	 * the next TBTT_TIMER value
 	 */
-	if (dev->tbtt_count == 62)
+	if (dev->tbtt_count == 63)
 		timer_val -= 1;
 
 	mt76_rmw_field(dev, MT_BEACON_TIME_CFG,
 		       MT_BEACON_TIME_CFG_INTVAL, timer_val);
+
+	if (dev->tbtt_count >= 64) {
+		dev->tbtt_count = 0;
+		return;
+	}
 }
 
 static void mt76x02_pre_tbtt_tasklet(unsigned long arg)
 {
 	struct mt76x02_dev *dev = (struct mt76x02_dev *)arg;
-	struct mt76_queue *q = &dev->mt76.q_tx[MT_TXQ_PSD];
+	struct mt76_queue *q = dev->mt76.q_tx[MT_TXQ_PSD].q;
 	struct beacon_bc_data data = {};
 	struct sk_buff *skb;
 	int i, nframes;
@@ -145,25 +146,29 @@ static void mt76x02_pre_tbtt_tasklet(unsigned long arg)
 		struct ieee80211_vif *vif = info->control.vif;
 		struct mt76x02_vif *mvif = (struct mt76x02_vif *)vif->drv_priv;
 
-		mt76_dma_tx_queue_skb(&dev->mt76, q, skb, &mvif->group_wcid,
-				      NULL);
+		mt76_dma_tx_queue_skb(&dev->mt76, MT_TXQ_PSD, skb,
+				      &mvif->group_wcid, NULL);
 	}
 	spin_unlock_bh(&q->lock);
 }
 
 static int
-mt76x02_init_tx_queue(struct mt76x02_dev *dev, struct mt76_queue *q,
+mt76x02_init_tx_queue(struct mt76x02_dev *dev, struct mt76_sw_queue *q,
 		      int idx, int n_desc)
 {
-	int ret;
+	struct mt76_queue *hwq;
+	int err;
 
-	q->regs = dev->mt76.mmio.regs + MT_TX_RING_BASE + idx * MT_RING_SIZE;
-	q->ndesc = n_desc;
-	q->hw_idx = idx;
+	hwq = devm_kzalloc(dev->mt76.dev, sizeof(*hwq), GFP_KERNEL);
+	if (!hwq)
+		return -ENOMEM;
 
-	ret = mt76_queue_alloc(dev, q);
-	if (ret)
-		return ret;
+	err = mt76_queue_alloc(dev, hwq, idx, n_desc, 0, MT_TX_RING_BASE);
+	if (err < 0)
+		return err;
+
+	INIT_LIST_HEAD(&q->swq);
+	q->q = hwq;
 
 	mt76x02_irq_enable(dev, MT_INT_TX_DONE(idx));
 
@@ -174,15 +179,12 @@ static int
 mt76x02_init_rx_queue(struct mt76x02_dev *dev, struct mt76_queue *q,
 		      int idx, int n_desc, int bufsize)
 {
-	int ret;
+	int err;
 
-	q->regs = dev->mt76.mmio.regs + MT_RX_RING_BASE + idx * MT_RING_SIZE;
-	q->ndesc = n_desc;
-	q->buf_size = bufsize;
-
-	ret = mt76_queue_alloc(dev, q);
-	if (ret)
-		return ret;
+	err = mt76_queue_alloc(dev, q, idx, n_desc, bufsize,
+			       MT_RX_RING_BASE);
+	if (err < 0)
+		return err;
 
 	mt76x02_irq_enable(dev, MT_INT_RX_DONE(idx));
 
@@ -231,6 +233,7 @@ int mt76x02_dma_init(struct mt76x02_dev *dev)
 	tasklet_init(&dev->pre_tbtt_tasklet, mt76x02_pre_tbtt_tasklet,
 		     (unsigned long)dev);
 
+	spin_lock_init(&dev->txstatus_fifo_lock);
 	kfifo_init(&dev->txstatus_fifo, status_fifo, fifo_size);
 
 	mt76_dma_attach(&dev->mt76);
@@ -318,7 +321,7 @@ irqreturn_t mt76x02_irq_handler(int irq, void *dev_instance)
 		if (dev->mt76.csa_complete)
 			mt76_csa_finish(&dev->mt76);
 		else
-			mt76_queue_kick(dev, &dev->mt76.q_tx[MT_TXQ_PSD]);
+			mt76_queue_kick(dev, dev->mt76.q_tx[MT_TXQ_PSD].q);
 	}
 
 	if (intr & MT_INT_TX_STAT) {
@@ -334,18 +337,6 @@ irqreturn_t mt76x02_irq_handler(int irq, void *dev_instance)
 	return IRQ_HANDLED;
 }
 EXPORT_SYMBOL_GPL(mt76x02_irq_handler);
-
-void mt76x02_set_irq_mask(struct mt76x02_dev *dev, u32 clear, u32 set)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&dev->mt76.mmio.irq_lock, flags);
-	dev->mt76.mmio.irqmask &= ~clear;
-	dev->mt76.mmio.irqmask |= set;
-	mt76_wr(dev, MT_INT_MASK_CSR, dev->mt76.mmio.irqmask);
-	spin_unlock_irqrestore(&dev->mt76.mmio.irq_lock, flags);
-}
-EXPORT_SYMBOL_GPL(mt76x02_set_irq_mask);
 
 static void mt76x02_dma_enable(struct mt76x02_dev *dev)
 {
@@ -402,7 +393,7 @@ static bool mt76x02_tx_hang(struct mt76x02_dev *dev)
 	int i;
 
 	for (i = 0; i < 4; i++) {
-		q = &dev->mt76.q_tx[i];
+		q = dev->mt76.q_tx[i].q;
 
 		if (!q->queued)
 			continue;
@@ -418,9 +409,66 @@ static bool mt76x02_tx_hang(struct mt76x02_dev *dev)
 	return i < 4;
 }
 
+static void mt76x02_key_sync(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+			     struct ieee80211_sta *sta,
+			     struct ieee80211_key_conf *key, void *data)
+{
+	struct mt76x02_dev *dev = hw->priv;
+	struct mt76_wcid *wcid;
+
+	if (!sta)
+	    return;
+
+	wcid = (struct mt76_wcid *) sta->drv_priv;
+
+	if (wcid->hw_key_idx != key->keyidx || wcid->sw_iv)
+	    return;
+
+	mt76x02_mac_wcid_sync_pn(dev, wcid->idx, key);
+}
+
+static void mt76x02_reset_state(struct mt76x02_dev *dev)
+{
+	int i;
+
+	lockdep_assert_held(&dev->mt76.mutex);
+
+	clear_bit(MT76_STATE_RUNNING, &dev->mt76.state);
+
+	rcu_read_lock();
+	ieee80211_iter_keys_rcu(dev->mt76.hw, NULL, mt76x02_key_sync, NULL);
+	rcu_read_unlock();
+
+	for (i = 0; i < ARRAY_SIZE(dev->mt76.wcid); i++) {
+		struct ieee80211_sta *sta;
+		struct ieee80211_vif *vif;
+		struct mt76x02_sta *msta;
+		struct mt76_wcid *wcid;
+		void *priv;
+
+		wcid = rcu_dereference_protected(dev->mt76.wcid[i],
+					lockdep_is_held(&dev->mt76.mutex));
+		if (!wcid)
+			continue;
+
+		priv = msta = container_of(wcid, struct mt76x02_sta, wcid);
+		sta = container_of(priv, struct ieee80211_sta, drv_priv);
+
+		priv = msta->vif;
+		vif = container_of(priv, struct ieee80211_vif, drv_priv);
+
+		__mt76_sta_remove(&dev->mt76, vif, sta);
+		memset(msta, 0, sizeof(*msta));
+	}
+
+	dev->vif_mask = 0;
+	dev->beacon_mask = 0;
+}
+
 static void mt76x02_watchdog_reset(struct mt76x02_dev *dev)
 {
 	u32 mask = dev->mt76.mmio.irqmask;
+	bool restart = dev->mt76.mcu_ops->mcu_restart;
 	int i;
 
 	ieee80211_stop_queues(dev->mt76.hw);
@@ -433,6 +481,9 @@ static void mt76x02_watchdog_reset(struct mt76x02_dev *dev)
 		napi_disable(&dev->mt76.napi[i]);
 
 	mutex_lock(&dev->mt76.mutex);
+
+	if (restart)
+		mt76x02_reset_state(dev);
 
 	if (dev->beacon_mask)
 		mt76_clear(dev, MT_BEACON_TIME_CFG,
@@ -452,20 +503,21 @@ static void mt76x02_watchdog_reset(struct mt76x02_dev *dev)
 	/* let fw reset DMA */
 	mt76_set(dev, 0x734, 0x3);
 
+	if (restart)
+		dev->mt76.mcu_ops->mcu_restart(&dev->mt76);
+
 	for (i = 0; i < ARRAY_SIZE(dev->mt76.q_tx); i++)
 		mt76_queue_tx_cleanup(dev, i, true);
 
 	for (i = 0; i < ARRAY_SIZE(dev->mt76.q_rx); i++)
 		mt76_queue_rx_reset(dev, i);
 
-	mt76_wr(dev, MT_MAC_SYS_CTRL,
-		MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX);
-	mt76_set(dev, MT_WPDMA_GLO_CFG,
-		 MT_WPDMA_GLO_CFG_TX_DMA_EN | MT_WPDMA_GLO_CFG_RX_DMA_EN);
+	mt76x02_mac_start(dev);
+
 	if (dev->ed_monitor)
 		mt76_set(dev, MT_TXOP_CTRL_CFG, MT_TXOP_ED_CCA_EN);
 
-	if (dev->beacon_mask)
+	if (dev->beacon_mask && !restart)
 		mt76_set(dev, MT_BEACON_TIME_CFG,
 			 MT_BEACON_TIME_CFG_BEACON_TX |
 			 MT_BEACON_TIME_CFG_TBTT_EN);
@@ -486,26 +538,40 @@ static void mt76x02_watchdog_reset(struct mt76x02_dev *dev)
 		napi_schedule(&dev->mt76.napi[i]);
 	}
 
-	ieee80211_wake_queues(dev->mt76.hw);
-
-	mt76_txq_schedule_all(&dev->mt76);
+	if (restart) {
+		mt76x02_mcu_function_select(dev, Q_SELECT, 1);
+		ieee80211_restart_hw(dev->mt76.hw);
+	} else {
+		ieee80211_wake_queues(dev->mt76.hw);
+		mt76_txq_schedule_all(&dev->mt76);
+	}
 }
 
 static void mt76x02_check_tx_hang(struct mt76x02_dev *dev)
 {
 	if (mt76x02_tx_hang(dev)) {
-		if (++dev->tx_hang_check < MT_TX_HANG_TH)
-			return;
-
-		mt76x02_watchdog_reset(dev);
-
-		dev->tx_hang_reset++;
-		dev->tx_hang_check = 0;
-		memset(dev->mt76.tx_dma_idx, 0xff,
-		       sizeof(dev->mt76.tx_dma_idx));
+		if (++dev->tx_hang_check >= MT_TX_HANG_TH)
+			goto restart;
 	} else {
 		dev->tx_hang_check = 0;
 	}
+
+	if (dev->mcu_timeout)
+		goto restart;
+
+	return;
+
+restart:
+	mt76x02_watchdog_reset(dev);
+
+	mutex_lock(&dev->mt76.mmio.mcu.mutex);
+	dev->mcu_timeout = 0;
+	mutex_unlock(&dev->mt76.mmio.mcu.mutex);
+
+	dev->tx_hang_reset++;
+	dev->tx_hang_check = 0;
+	memset(dev->mt76.tx_dma_idx, 0xff,
+	       sizeof(dev->mt76.tx_dma_idx));
 }
 
 void mt76x02_wdt_work(struct work_struct *work)

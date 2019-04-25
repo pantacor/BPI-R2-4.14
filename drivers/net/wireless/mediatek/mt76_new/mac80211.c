@@ -124,7 +124,7 @@ static void mt76_init_stream_cap(struct mt76_dev *dev,
 				 bool vht)
 {
 	struct ieee80211_sta_ht_cap *ht_cap = &sband->ht_cap;
-	int i, nstream = __sw_hweight8(dev->antenna_mask);
+	int i, nstream = hweight8(dev->antenna_mask);
 	struct ieee80211_sta_vht_cap *vht_cap;
 	u16 mcs_map = 0;
 
@@ -269,7 +269,9 @@ mt76_check_sband(struct mt76_dev *dev, int band)
 }
 
 struct mt76_dev *
-mt76_alloc_device(unsigned int size, const struct ieee80211_ops *ops)
+mt76_alloc_device(struct device *pdev, unsigned int size,
+		  const struct ieee80211_ops *ops,
+		  const struct mt76_driver_ops *drv_ops)
 {
 	struct ieee80211_hw *hw;
 	struct mt76_dev *dev;
@@ -280,6 +282,9 @@ mt76_alloc_device(unsigned int size, const struct ieee80211_ops *ops)
 
 	dev = hw->priv;
 	dev->hw = hw;
+	dev->dev = pdev;
+	dev->drv = drv_ops;
+
 	spin_lock_init(&dev->rx_lock);
 	spin_lock_init(&dev->lock);
 	spin_lock_init(&dev->cc_lock);
@@ -381,10 +386,12 @@ EXPORT_SYMBOL_GPL(mt76_rx);
 
 static bool mt76_has_tx_pending(struct mt76_dev *dev)
 {
+	struct mt76_queue *q;
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(dev->q_tx); i++) {
-		if (dev->q_tx[i].queued)
+		q = dev->q_tx[i].q;
+		if (q && q->queued)
 			return true;
 	}
 
@@ -674,18 +681,14 @@ out:
 	return ret;
 }
 
-static void
-mt76_sta_remove(struct mt76_dev *dev, struct ieee80211_vif *vif,
-	        struct ieee80211_sta *sta)
+void __mt76_sta_remove(struct mt76_dev *dev, struct ieee80211_vif *vif,
+		       struct ieee80211_sta *sta)
 {
 	struct mt76_wcid *wcid = (struct mt76_wcid *)sta->drv_priv;
-	int idx = wcid->idx;
-	int i;
+	int i, idx = wcid->idx;
 
 	rcu_assign_pointer(dev->wcid[idx], NULL);
 	synchronize_rcu();
-
-	mutex_lock(&dev->mutex);
 
 	if (dev->drv->sta_remove)
 		dev->drv->sta_remove(dev, vif, sta);
@@ -694,7 +697,15 @@ mt76_sta_remove(struct mt76_dev *dev, struct ieee80211_vif *vif,
 	for (i = 0; i < ARRAY_SIZE(sta->txq); i++)
 		mt76_txq_remove(dev, sta->txq[i]);
 	mt76_wcid_free(dev->wcid_mask, idx);
+}
+EXPORT_SYMBOL_GPL(__mt76_sta_remove);
 
+static void
+mt76_sta_remove(struct mt76_dev *dev, struct ieee80211_vif *vif,
+		struct ieee80211_sta *sta)
+{
+	mutex_lock(&dev->mutex);
+	__mt76_sta_remove(dev, vif, sta);
 	mutex_unlock(&dev->mutex);
 }
 
@@ -709,6 +720,11 @@ int mt76_sta_state(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	    new_state == IEEE80211_STA_NONE)
 		return mt76_sta_add(dev, vif, sta);
 
+	if (old_state == IEEE80211_STA_AUTH &&
+	    new_state == IEEE80211_STA_ASSOC &&
+	    dev->drv->sta_assoc)
+		dev->drv->sta_assoc(dev, vif, sta);
+
 	if (old_state == IEEE80211_STA_NONE &&
 		 new_state == IEEE80211_STA_NOTEXIST)
 		mt76_sta_remove(dev, vif, sta);
@@ -721,7 +737,7 @@ int mt76_get_txpower(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		     int *dbm)
 {
 	struct mt76_dev *dev = hw->priv;
-	int n_chains = __sw_hweight8(dev->antenna_mask);
+	int n_chains = hweight8(dev->antenna_mask);
 
 	*dbm = dev->txpower_cur / 2;
 

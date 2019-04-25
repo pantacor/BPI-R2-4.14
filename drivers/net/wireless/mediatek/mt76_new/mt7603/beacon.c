@@ -1,19 +1,4 @@
 /* SPDX-License-Identifier: ISC */
-/*
- * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
 
 #include "mt7603.h"
 
@@ -38,8 +23,21 @@ mt7603_update_beacon_iter(void *priv, u8 *mac, struct ieee80211_vif *vif)
 	if (!skb)
 		return;
 
-	mt76_dma_tx_queue_skb(&dev->mt76, &dev->mt76.q_tx[MT_TXQ_BEACON], skb,
+	mt76_dma_tx_queue_skb(&dev->mt76, MT_TXQ_BEACON, skb,
 			      &mvif->sta.wcid, NULL);
+
+	spin_lock_bh(&dev->ps_lock);
+	mt76_wr(dev, MT_DMA_FQCR0, MT_DMA_FQCR0_BUSY |
+		FIELD_PREP(MT_DMA_FQCR0_TARGET_WCID, mvif->sta.wcid.idx) |
+		FIELD_PREP(MT_DMA_FQCR0_TARGET_QID,
+			   dev->mt76.q_tx[MT_TXQ_CAB].q->hw_idx) |
+		FIELD_PREP(MT_DMA_FQCR0_DEST_PORT_ID, 3) |
+		FIELD_PREP(MT_DMA_FQCR0_DEST_QUEUE_ID, 8));
+
+	if (!mt76_poll(dev, MT_DMA_FQCR0, MT_DMA_FQCR0_BUSY, 0, 5000))
+		dev->beacon_check = MT7603_WATCHDOG_TIMEOUT;
+
+	spin_unlock_bh(&dev->ps_lock);
 }
 
 static void
@@ -75,13 +73,10 @@ void mt7603_pre_tbtt_tasklet(unsigned long arg)
 	struct sk_buff *skb;
 	int i, nframes;
 
-	/* Flush all previous CAB queue packets */
-	mt76_wr(dev, MT_WF_ARB_CAB_FLUSH, GENMASK(30, 16) | BIT(0));
-
 	data.dev = dev;
 	__skb_queue_head_init(&data.q);
 
-	q = &dev->mt76.q_tx[MT_TXQ_BEACON];
+	q = dev->mt76.q_tx[MT_TXQ_BEACON].q;
 	spin_lock_bh(&q->lock);
 	ieee80211_iterate_active_interfaces_atomic(mt76_hw(dev),
 		IEEE80211_IFACE_ITER_RESUME_ALL,
@@ -89,13 +84,16 @@ void mt7603_pre_tbtt_tasklet(unsigned long arg)
 	mt76_queue_kick(dev, q);
 	spin_unlock_bh(&q->lock);
 
+	/* Flush all previous CAB queue packets */
+	mt76_wr(dev, MT_WF_ARB_CAB_FLUSH, GENMASK(30, 16) | BIT(0));
+
 	mt76_queue_tx_cleanup(dev, MT_TXQ_CAB, false);
 
 	mt76_csa_check(&dev->mt76);
 	if (dev->mt76.csa_complete)
 		goto out;
 
-	q = &dev->mt76.q_tx[MT_TXQ_CAB];
+	q = dev->mt76.q_tx[MT_TXQ_CAB].q;
 	do {
 		nframes = skb_queue_len(&data.q);
 		ieee80211_iterate_active_interfaces_atomic(mt76_hw(dev),
@@ -120,14 +118,14 @@ void mt7603_pre_tbtt_tasklet(unsigned long arg)
 		struct ieee80211_vif *vif = info->control.vif;
 		struct mt7603_vif *mvif = (struct mt7603_vif *)vif->drv_priv;
 
-		mt76_dma_tx_queue_skb(&dev->mt76, q, skb, &mvif->sta.wcid,
-				      NULL);
+		mt76_dma_tx_queue_skb(&dev->mt76, MT_TXQ_CAB, skb,
+				      &mvif->sta.wcid, NULL);
 	}
 	mt76_queue_kick(dev, q);
 	spin_unlock_bh(&q->lock);
 
 	for (i = 0; i < ARRAY_SIZE(data.count); i++)
-		mt76_wr(dev, MT_WF_ARB_CAB_COUNT(i),
+		mt76_wr(dev, MT_WF_ARB_CAB_COUNT_B0_REG(i),
 			data.count[i] << MT_WF_ARB_CAB_COUNT_B0_SHIFT(i));
 
 	mt76_wr(dev, MT_WF_ARB_CAB_START,
@@ -137,7 +135,8 @@ void mt7603_pre_tbtt_tasklet(unsigned long arg)
 
 out:
 	mt76_queue_tx_cleanup(dev, MT_TXQ_BEACON, false);
-	if (dev->mt76.q_tx[MT_TXQ_BEACON].queued > MT7603_MAX_INTERFACES)
+	if (dev->mt76.q_tx[MT_TXQ_BEACON].q->queued >
+	    hweight8(dev->beacon_mask))
 		dev->beacon_check++;
 }
 

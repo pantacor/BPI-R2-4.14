@@ -205,9 +205,6 @@ mt76_tx_status_skb_get(struct mt76_dev *dev, struct mt76_wcid *wcid, int pktid,
 {
 	struct sk_buff *skb, *tmp;
 
-	if (pktid == MT_PACKET_ID_NO_ACK)
-		return NULL;
-
 	skb_queue_walk_safe(&dev->status_list, skb, tmp) {
 		struct mt76_tx_cb *cb = mt76_tx_skb_cb(skb);
 
@@ -217,7 +214,7 @@ mt76_tx_status_skb_get(struct mt76_dev *dev, struct mt76_wcid *wcid, int pktid,
 		if (cb->pktid == pktid)
 			return skb;
 
-		if (!pktid &&
+		if (pktid >= 0 &&
 		    !time_after(jiffies, cb->jiffies + MT_TX_STATUS_SKB_TIMEOUT))
 			continue;
 
@@ -286,14 +283,17 @@ mt76_tx(struct mt76_dev *dev, struct ieee80211_sta *sta,
 			mt76_check_agg_ssn(mtxq, skb);
 	}
 
-	q = &dev->q_tx[qid];
+	q = dev->q_tx[qid].q;
 
 	spin_lock_bh(&q->lock);
-	dev->queue_ops->tx_queue_skb(dev, q, skb, wcid, sta);
+	dev->queue_ops->tx_queue_skb(dev, qid, skb, wcid, sta);
 	dev->queue_ops->kick(dev, q);
 
-	if (q->queued > q->ndesc - 8)
+	if (q->queued > q->ndesc - 8 && !q->stopped) {
 		ieee80211_stop_queue(dev->hw, skb_get_queue_mapping(skb));
+		q->stopped = true;
+	}
+
 	spin_unlock_bh(&q->lock);
 }
 EXPORT_SYMBOL_GPL(mt76_tx);
@@ -327,7 +327,6 @@ mt76_queue_ps_skb(struct mt76_dev *dev, struct ieee80211_sta *sta,
 {
 	struct mt76_wcid *wcid = (struct mt76_wcid *) sta->drv_priv;
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
-	struct mt76_queue *hwq = &dev->q_tx[MT_TXQ_PSD];
 
 	info->control.flags |= IEEE80211_TX_CTRL_PS_RESPONSE;
 	if (last)
@@ -335,7 +334,7 @@ mt76_queue_ps_skb(struct mt76_dev *dev, struct ieee80211_sta *sta,
 			       IEEE80211_TX_CTL_REQ_TX_STATUS;
 
 	mt76_skb_set_moredata(skb, !last);
-	dev->queue_ops->tx_queue_skb(dev, hwq, skb, wcid, sta);
+	dev->queue_ops->tx_queue_skb(dev, MT_TXQ_PSD, skb, wcid, sta);
 }
 
 void
@@ -346,7 +345,7 @@ mt76_release_buffered_frames(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
 {
 	struct mt76_dev *dev = hw->priv;
 	struct sk_buff *last_skb = NULL;
-	struct mt76_queue *hwq = &dev->q_tx[MT_TXQ_PSD];
+	struct mt76_queue *hwq = dev->q_tx[MT_TXQ_PSD].q;
 	int i;
 
 	spin_lock_bh(&hwq->lock);
@@ -377,24 +376,34 @@ mt76_release_buffered_frames(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
 	if (last_skb) {
 		mt76_queue_ps_skb(dev, sta, last_skb, true);
 		dev->queue_ops->kick(dev, hwq);
+	} else {
+		ieee80211_sta_eosp(sta);
 	}
+
 	spin_unlock_bh(&hwq->lock);
 }
 EXPORT_SYMBOL_GPL(mt76_release_buffered_frames);
 
 static int
-mt76_txq_send_burst(struct mt76_dev *dev, struct mt76_queue *hwq,
+mt76_txq_send_burst(struct mt76_dev *dev, struct mt76_sw_queue *sq,
 		    struct mt76_txq *mtxq, bool *empty)
 {
 	struct ieee80211_txq *txq = mtxq_to_txq(mtxq);
-	struct ieee80211_tx_info *info;
+	enum mt76_txq_id qid = mt76_txq_get_qid(txq);
 	struct mt76_wcid *wcid = mtxq->wcid;
+	struct mt76_queue *hwq = sq->q;
+	struct ieee80211_tx_info *info;
 	struct sk_buff *skb;
 	int n_frames = 1, limit;
 	struct ieee80211_tx_rate tx_rate;
 	bool ampdu;
 	bool probe;
 	int idx;
+
+	if (test_bit(MT_WCID_FLAG_PS, &wcid->flags)) {
+		*empty = true;
+		return 0;
+	}
 
 	skb = mt76_txq_dequeue(dev, mtxq, false);
 	if (!skb) {
@@ -415,7 +424,7 @@ mt76_txq_send_burst(struct mt76_dev *dev, struct mt76_queue *hwq,
 	if (ampdu)
 		mt76_check_agg_ssn(mtxq, skb);
 
-	idx = dev->queue_ops->tx_queue_skb(dev, hwq, skb, wcid, txq->sta);
+	idx = dev->queue_ops->tx_queue_skb(dev, qid, skb, wcid, txq->sta);
 
 	if (idx < 0)
 		return idx;
@@ -450,7 +459,7 @@ mt76_txq_send_burst(struct mt76_dev *dev, struct mt76_queue *hwq,
 		if (cur_ampdu)
 			mt76_check_agg_ssn(mtxq, skb);
 
-		idx = dev->queue_ops->tx_queue_skb(dev, hwq, skb, wcid,
+		idx = dev->queue_ops->tx_queue_skb(dev, qid, skb, wcid,
 						   txq->sta);
 		if (idx < 0)
 			return idx;
@@ -459,8 +468,9 @@ mt76_txq_send_burst(struct mt76_dev *dev, struct mt76_queue *hwq,
 	} while (n_frames < limit);
 
 	if (!probe) {
-		hwq->swq_queued++;
+		hwq->entry[idx].qid = sq - dev->q_tx;
 		hwq->entry[idx].schedule = true;
+		sq->swq_queued++;
 	}
 
 	dev->queue_ops->kick(dev, hwq);
@@ -469,14 +479,15 @@ mt76_txq_send_burst(struct mt76_dev *dev, struct mt76_queue *hwq,
 }
 
 static int
-mt76_txq_schedule_list(struct mt76_dev *dev, struct mt76_queue *hwq)
+mt76_txq_schedule_list(struct mt76_dev *dev, struct mt76_sw_queue *sq)
 {
+	struct mt76_queue *hwq = sq->q;
 	struct mt76_txq *mtxq, *mtxq_last;
 	int len = 0;
 
 restart:
-	mtxq_last = list_last_entry(&hwq->swq, struct mt76_txq, list);
-	while (!list_empty(&hwq->swq)) {
+	mtxq_last = list_last_entry(&sq->swq, struct mt76_txq, list);
+	while (!list_empty(&sq->swq)) {
 		bool empty = false;
 		int cur;
 
@@ -484,7 +495,7 @@ restart:
 		    test_bit(MT76_RESET, &dev->state))
 			return -EBUSY;
 
-		mtxq = list_first_entry(&hwq->swq, struct mt76_txq, list);
+		mtxq = list_first_entry(&sq->swq, struct mt76_txq, list);
 		if (mtxq->send_bar && mtxq->aggr) {
 			struct ieee80211_txq *txq = mtxq_to_txq(mtxq);
 			struct ieee80211_sta *sta = txq->sta;
@@ -501,9 +512,9 @@ restart:
 
 		list_del_init(&mtxq->list);
 
-		cur = mt76_txq_send_burst(dev, hwq, mtxq, &empty);
+		cur = mt76_txq_send_burst(dev, sq, mtxq, &empty);
 		if (!empty)
-			list_add_tail(&mtxq->list, &hwq->swq);
+			list_add_tail(&mtxq->list, &sq->swq);
 
 		if (cur < 0)
 			return cur;
@@ -517,16 +528,16 @@ restart:
 	return len;
 }
 
-void mt76_txq_schedule(struct mt76_dev *dev, struct mt76_queue *hwq)
+void mt76_txq_schedule(struct mt76_dev *dev, struct mt76_sw_queue *sq)
 {
 	int len;
 
 	rcu_read_lock();
 	do {
-		if (hwq->swq_queued >= 4 || list_empty(&hwq->swq))
+		if (sq->swq_queued >= 4 || list_empty(&sq->swq))
 			break;
 
-		len = mt76_txq_schedule_list(dev, hwq);
+		len = mt76_txq_schedule_list(dev, sq);
 	} while (len > 0);
 	rcu_read_unlock();
 }
@@ -537,10 +548,10 @@ void mt76_txq_schedule_all(struct mt76_dev *dev)
 	int i;
 
 	for (i = 0; i <= MT_TXQ_BK; i++) {
-		struct mt76_queue *q = &dev->q_tx[i];
+		struct mt76_queue *q = dev->q_tx[i].q;
 
 		spin_lock_bh(&q->lock);
-		mt76_txq_schedule(dev, q);
+		mt76_txq_schedule(dev, &dev->q_tx[i]);
 		spin_unlock_bh(&q->lock);
 	}
 }
@@ -553,18 +564,20 @@ void mt76_stop_tx_queues(struct mt76_dev *dev, struct ieee80211_sta *sta,
 
 	for (i = 0; i < ARRAY_SIZE(sta->txq); i++) {
 		struct ieee80211_txq *txq = sta->txq[i];
+		struct mt76_queue *hwq;
 		struct mt76_txq *mtxq;
 
 		if (!txq)
 			continue;
 
 		mtxq = (struct mt76_txq *)txq->drv_priv;
+		hwq = mtxq->swq->q;
 
-		spin_lock_bh(&mtxq->hwq->lock);
+		spin_lock_bh(&hwq->lock);
 		mtxq->send_bar = mtxq->aggr && send_bar;
 		if (!list_empty(&mtxq->list))
 			list_del_init(&mtxq->list);
-		spin_unlock_bh(&mtxq->hwq->lock);
+		spin_unlock_bh(&hwq->lock);
 	}
 }
 EXPORT_SYMBOL_GPL(mt76_stop_tx_queues);
@@ -572,28 +585,32 @@ EXPORT_SYMBOL_GPL(mt76_stop_tx_queues);
 void mt76_wake_tx_queue(struct ieee80211_hw *hw, struct ieee80211_txq *txq)
 {
 	struct mt76_dev *dev = hw->priv;
-	struct mt76_txq *mtxq = (struct mt76_txq *) txq->drv_priv;
-	struct mt76_queue *hwq = mtxq->hwq;
+	struct mt76_txq *mtxq = (struct mt76_txq *)txq->drv_priv;
+	struct mt76_sw_queue *sq = mtxq->swq;
+	struct mt76_queue *hwq = sq->q;
+
+	if (!test_bit(MT76_STATE_RUNNING, &dev->state))
+		return;
 
 	spin_lock_bh(&hwq->lock);
 	if (list_empty(&mtxq->list))
-		list_add_tail(&mtxq->list, &hwq->swq);
-	mt76_txq_schedule(dev, hwq);
+		list_add_tail(&mtxq->list, &sq->swq);
+	mt76_txq_schedule(dev, sq);
 	spin_unlock_bh(&hwq->lock);
 }
 EXPORT_SYMBOL_GPL(mt76_wake_tx_queue);
 
 void mt76_txq_remove(struct mt76_dev *dev, struct ieee80211_txq *txq)
 {
-	struct mt76_txq *mtxq;
 	struct mt76_queue *hwq;
+	struct mt76_txq *mtxq;
 	struct sk_buff *skb;
 
 	if (!txq)
 		return;
 
 	mtxq = (struct mt76_txq *) txq->drv_priv;
-	hwq = mtxq->hwq;
+	hwq = mtxq->swq->q;
 
 	spin_lock_bh(&hwq->lock);
 	if (!list_empty(&mtxq->list))
@@ -612,7 +629,7 @@ void mt76_txq_init(struct mt76_dev *dev, struct ieee80211_txq *txq)
 	INIT_LIST_HEAD(&mtxq->list);
 	skb_queue_head_init(&mtxq->retry_q);
 
-	mtxq->hwq = &dev->q_tx[mt76_txq_get_qid(txq)];
+	mtxq->swq = &dev->q_tx[mt76_txq_get_qid(txq)];
 }
 EXPORT_SYMBOL_GPL(mt76_txq_init);
 

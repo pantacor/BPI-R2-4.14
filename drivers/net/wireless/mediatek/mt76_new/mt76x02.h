@@ -27,6 +27,7 @@
 #include "mt76x02_dma.h"
 
 #define MT_CALIBRATE_INTERVAL	HZ
+#define MT_MAC_WORK_INTERVAL	(HZ / 10)
 
 #define MT_WATCHDOG_TIME	(HZ / 10)
 #define MT_TX_HANG_TH		10
@@ -50,6 +51,7 @@ struct mt76x02_calibration {
 	u16 false_cca;
 	s8 avg_rssi_all;
 	s8 agc_gain_adjust;
+	s8 agc_lowest_gain;
 	s8 low_gain;
 
 	s8 temp_vco;
@@ -73,8 +75,11 @@ struct mt76x02_dev {
 
 	struct mutex phy_mutex;
 
+	u16 vif_mask;
+
 	u8 txdone_seq;
 	DECLARE_KFIFO_PTR(txstatus_fifo, struct mt76x02_tx_status);
+	spinlock_t txstatus_fifo_lock;
 
 	struct sk_buff *rx_head;
 
@@ -95,6 +100,7 @@ struct mt76x02_dev {
 
 	u32 tx_hang_reset;
 	u8 tx_hang_check;
+	u8 mcu_timeout;
 
 	struct mt76x02_calibration cal;
 
@@ -110,10 +116,14 @@ struct mt76x02_dev {
 	struct mt76x02_dfs_pattern_detector dfs_pd;
 
 	/* edcca monitor */
+	unsigned long ed_trigger_timeout;
 	bool ed_tx_blocked;
 	bool ed_monitor;
+	u8 ed_monitor_enabled;
+	u8 ed_monitor_learning;
 	u8 ed_trigger;
 	u8 ed_silent;
+	ktime_t ed_time;
 };
 
 extern struct ieee80211_rate mt76x02_rates[12];
@@ -128,8 +138,7 @@ void mt76x02_sta_remove(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 			struct ieee80211_sta *sta);
 
 void mt76x02_config_mac_addr_list(struct mt76x02_dev *dev);
-void mt76x02_vif_init(struct mt76x02_dev *dev, struct ieee80211_vif *vif,
-		      unsigned int idx);
+
 int mt76x02_add_interface(struct ieee80211_hw *hw,
 			 struct ieee80211_vif *vif);
 void mt76x02_remove_interface(struct ieee80211_hw *hw,
@@ -155,7 +164,6 @@ void mt76x02_set_tx_ackto(struct mt76x02_dev *dev);
 void mt76x02_set_coverage_class(struct ieee80211_hw *hw,
 				s16 coverage_class);
 int mt76x02_set_rts_threshold(struct ieee80211_hw *hw, u32 val);
-int mt76x02_insert_hdr_pad(struct sk_buff *skb);
 void mt76x02_remove_hdr_pad(struct sk_buff *skb, int len);
 bool mt76x02_tx_status_data(struct mt76_dev *mdev, u8 *update);
 void mt76x02_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
@@ -165,9 +173,9 @@ irqreturn_t mt76x02_irq_handler(int irq, void *dev_instance);
 void mt76x02_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *control,
 		struct sk_buff *skb);
 int mt76x02_tx_prepare_skb(struct mt76_dev *mdev, void *txwi,
-			   struct sk_buff *skb, struct mt76_queue *q,
+			   struct sk_buff *skb, enum mt76_txq_id qid,
 			   struct mt76_wcid *wcid, struct ieee80211_sta *sta,
-			   u32 *tx_info);
+			   struct mt76_tx_info *tx_info);
 void mt76x02_sw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		     const u8 *mac);
 void mt76x02_sw_scan_complete(struct ieee80211_hw *hw,
@@ -179,7 +187,6 @@ void mt76x02_bss_info_changed(struct ieee80211_hw *hw,
 
 extern const u16 mt76x02_beacon_offsets[16];
 void mt76x02_init_beacon_config(struct mt76x02_dev *dev);
-void mt76x02_set_irq_mask(struct mt76x02_dev *dev, u32 clear, u32 set);
 void mt76x02_mac_start(struct mt76x02_dev *dev);
 
 void mt76x02_init_debugfs(struct mt76x02_dev *dev);
@@ -193,12 +200,12 @@ static inline bool is_mt76x2(struct mt76x02_dev *dev)
 
 static inline void mt76x02_irq_enable(struct mt76x02_dev *dev, u32 mask)
 {
-	mt76x02_set_irq_mask(dev, 0, mask);
+	mt76_set_irq_mask(&dev->mt76, MT_INT_MASK_CSR, 0, mask);
 }
 
 static inline void mt76x02_irq_disable(struct mt76x02_dev *dev, u32 mask)
 {
-	mt76x02_set_irq_mask(dev, mask, 0);
+	mt76_set_irq_mask(&dev->mt76, MT_INT_MASK_CSR, mask, 0);
 }
 
 static inline bool

@@ -1,51 +1,22 @@
 /* SPDX-License-Identifier: ISC */
-/*
- * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
 
 #include <linux/etherdevice.h>
 #include "mt7603.h"
 #include "mac.h"
 #include "eeprom.h"
 
-struct mt7603_dev *mt7603_alloc_device(struct device *pdev)
-{
-	static const struct mt76_driver_ops drv_ops = {
-		.txwi_size = MT_TXD_SIZE,
-		.tx_prepare_skb = mt7603_tx_prepare_skb,
-		.tx_complete_skb = mt7603_tx_complete_skb,
-		.rx_skb = mt7603_queue_rx_skb,
-		.rx_poll_complete = mt7603_rx_poll_complete,
-		.sta_ps = mt7603_sta_ps,
-		.sta_add = mt7603_sta_add,
-		.sta_remove = mt7603_sta_remove,
-		.update_survey = mt7603_update_channel,
-	};
-	struct mt7603_dev *dev;
-	struct mt76_dev *mdev;
-
-	mdev = mt76_alloc_device(sizeof(*dev), &mt7603_ops);
-	if (!mdev)
-		return NULL;
-
-	dev = container_of(mdev, struct mt7603_dev, mt76);
-	mdev->dev = pdev;
-	mdev->drv = &drv_ops;
-
-	return dev;
-}
+const struct mt76_driver_ops mt7603_drv_ops = {
+	.txwi_size = MT_TXD_SIZE,
+	.tx_prepare_skb = mt7603_tx_prepare_skb,
+	.tx_complete_skb = mt7603_tx_complete_skb,
+	.rx_skb = mt7603_queue_rx_skb,
+	.rx_poll_complete = mt7603_rx_poll_complete,
+	.sta_ps = mt7603_sta_ps,
+	.sta_add = mt7603_sta_add,
+	.sta_assoc = mt7603_sta_assoc,
+	.sta_remove = mt7603_sta_remove,
+	.update_survey = mt7603_update_channel,
+};
 
 static void
 mt7603_set_tmac_template(struct mt7603_dev *dev)
@@ -141,7 +112,7 @@ static void
 mt7603_phy_init(struct mt7603_dev *dev)
 {
 	int rx_chains = dev->mt76.antenna_mask;
-	int tx_chains = __sw_hweight8(rx_chains) - 1;
+	int tx_chains = hweight8(rx_chains) - 1;
 
 	mt76_rmw(dev, MT_WF_RMAC_RMCR,
 		 (MT_WF_RMAC_RMCR_SMPS_MODE |
@@ -196,7 +167,8 @@ mt7603_mac_init(struct mt7603_dev *dev)
 		FIELD_PREP(MT_AGG_RETRY_CONTROL_BAR_LIMIT, 1) |
 		FIELD_PREP(MT_AGG_RETRY_CONTROL_RTS_LIMIT, 15));
 
-	mt76_rmw(dev, MT_DMA_DCR0, ~0xfffc, 4096);
+	mt76_wr(dev, MT_DMA_DCR0, MT_DMA_DCR0_RX_VEC_DROP |
+		FIELD_PREP(MT_DMA_DCR0_MAX_RX_LEN, 4096));
 
 	mt76_rmw(dev, MT_DMA_VCFR0, BIT(0), BIT(13));
 	mt76_rmw(dev, MT_DMA_TMCFR0, BIT(0) | BIT(1), BIT(13));
@@ -569,8 +541,10 @@ int mt7603_register_device(struct mt7603_dev *dev)
 	ieee80211_hw_set(hw, TX_STATUS_NO_AMPDU_LEN);
 
 	/* init led callbacks */
-	dev->mt76.led_cdev.brightness_set = mt7603_led_set_brightness;
-	dev->mt76.led_cdev.blink_set = mt7603_led_set_blink;
+	if (IS_ENABLED(CONFIG_MT76_LEDS)) {
+		dev->mt76.led_cdev.brightness_set = mt7603_led_set_brightness;
+		dev->mt76.led_cdev.blink_set = mt7603_led_set_blink;
+	}
 
 	wiphy->interface_modes =
 		BIT(NL80211_IFTYPE_STATION) |

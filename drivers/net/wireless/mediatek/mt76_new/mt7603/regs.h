@@ -1,19 +1,4 @@
 /* SPDX-License-Identifier: ISC */
-/*
- * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
 
 #ifndef __MT7603_REGS_H
 #define __MT7603_REGS_H
@@ -248,6 +233,10 @@
 #define MT_WF_DMA(ofs)			(MT_WF_DMA_BASE + (ofs))
 
 #define MT_DMA_DCR0			MT_WF_DMA(0x000)
+#define MT_DMA_DCR0_MAX_RX_LEN		GENMASK(15, 0)
+#define MT_DMA_DCR0_DAMSDU		BIT(16)
+#define MT_DMA_DCR0_RX_VEC_DROP		BIT(17)
+
 #define MT_DMA_DCR1			MT_WF_DMA(0x004)
 
 #define MT_DMA_FQCR0			MT_WF_DMA(0x008)

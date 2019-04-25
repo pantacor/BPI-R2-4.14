@@ -140,10 +140,16 @@ void mt76x02_init_device(struct mt76x02_dev *dev)
 	hw->max_rate_tries = 1;
 	hw->extra_tx_headroom = 2;
 
+	wiphy->interface_modes =
+		BIT(NL80211_IFTYPE_STATION) |
+#ifdef CONFIG_MAC80211_MESH
+		BIT(NL80211_IFTYPE_MESH_POINT) |
+#endif
+		BIT(NL80211_IFTYPE_ADHOC);
+
 	if (mt76_is_usb(dev)) {
 		hw->extra_tx_headroom += sizeof(struct mt76x02_txwi) +
 					 MT_DMA_HDR_LEN;
-		wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION);
 	} else {
 		INIT_DELAYED_WORK(&dev->wdt_work, mt76x02_wdt_work);
 
@@ -152,17 +158,8 @@ void mt76x02_init_device(struct mt76x02_dev *dev)
 		wiphy->reg_notifier = mt76x02_regd_notifier;
 		wiphy->iface_combinations = mt76x02_if_comb;
 		wiphy->n_iface_combinations = ARRAY_SIZE(mt76x02_if_comb);
-		wiphy->interface_modes =
-			BIT(NL80211_IFTYPE_STATION) |
-			BIT(NL80211_IFTYPE_AP) |
-#ifdef CONFIG_MAC80211_MESH
-			BIT(NL80211_IFTYPE_MESH_POINT) |
-#endif
-			BIT(NL80211_IFTYPE_ADHOC);
-
+		wiphy->interface_modes |= BIT(NL80211_IFTYPE_AP);
 		wiphy->flags |= WIPHY_FLAG_HAS_CHANNEL_SWITCH;
-
-		wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_VHT_IBSS);
 
 		/* init led callbacks */
 		if (IS_ENABLED(CONFIG_MT76_LEDS)) {
@@ -171,6 +168,8 @@ void mt76x02_init_device(struct mt76x02_dev *dev)
 			dev->mt76.led_cdev.blink_set = mt76x02_led_set_blink;
 		}
 	}
+
+	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_VHT_IBSS);
 
 	hw->sta_data_size = sizeof(struct mt76x02_sta);
 	hw->vif_data_size = sizeof(struct mt76x02_vif);
@@ -238,6 +237,8 @@ int mt76x02_sta_add(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 	struct mt76x02_vif *mvif = (struct mt76x02_vif *)vif->drv_priv;
 	int idx = 0;
 
+	memset(msta, 0, sizeof(*msta));
+
 	idx = mt76_wcid_alloc(dev->mt76.wcid_mask, ARRAY_SIZE(dev->mt76.wcid));
 	if (idx < 0)
 		return -ENOSPC;
@@ -268,11 +269,14 @@ void mt76x02_sta_remove(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 }
 EXPORT_SYMBOL_GPL(mt76x02_sta_remove);
 
-void mt76x02_vif_init(struct mt76x02_dev *dev, struct ieee80211_vif *vif,
-		      unsigned int idx)
+static void
+mt76x02_vif_init(struct mt76x02_dev *dev, struct ieee80211_vif *vif,
+		 unsigned int idx)
 {
 	struct mt76x02_vif *mvif = (struct mt76x02_vif *)vif->drv_priv;
 	struct mt76_txq *mtxq;
+
+	memset(mvif, 0, sizeof(*mvif));
 
 	mvif->idx = idx;
 	mvif->group_wcid.idx = MT_VIF_WCID(idx);
@@ -282,13 +286,18 @@ void mt76x02_vif_init(struct mt76x02_dev *dev, struct ieee80211_vif *vif,
 
 	mt76_txq_init(&dev->mt76, vif->txq);
 }
-EXPORT_SYMBOL_GPL(mt76x02_vif_init);
 
 int
 mt76x02_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 {
 	struct mt76x02_dev *dev = hw->priv;
 	unsigned int idx = 0;
+
+	/* Allow to change address in HW if we create first interface. */
+	if (!dev->vif_mask &&
+	    (((vif->addr[0] ^ dev->mt76.macaddr[0]) & ~GENMASK(4, 1)) ||
+	     memcmp(vif->addr + 1, dev->mt76.macaddr + 1, ETH_ALEN - 1)))
+		mt76x02_mac_setaddr(dev, vif->addr);
 
 	if (vif->addr[0] & BIT(1))
 		idx = 1 + (((dev->mt76.macaddr[0] ^ vif->addr[0]) >> 2) & 7);
@@ -309,6 +318,11 @@ mt76x02_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	if (vif->type == NL80211_IFTYPE_STATION)
 		idx += 8;
 
+	if (dev->vif_mask & BIT(idx))
+		return -EBUSY;
+
+	dev->vif_mask |= BIT(idx);
+
 	mt76x02_vif_init(dev, vif, idx);
 	return 0;
 }
@@ -318,8 +332,10 @@ void mt76x02_remove_interface(struct ieee80211_hw *hw,
 			      struct ieee80211_vif *vif)
 {
 	struct mt76x02_dev *dev = hw->priv;
+	struct mt76x02_vif *mvif = (struct mt76x02_vif *)vif->drv_priv;
 
 	mt76_txq_remove(&dev->mt76, vif->txq);
+	dev->vif_mask &= ~BIT(mvif->idx);
 }
 EXPORT_SYMBOL_GPL(mt76x02_remove_interface);
 
@@ -421,7 +437,7 @@ int mt76x02_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	} else {
 		if (idx == wcid->hw_key_idx) {
 			wcid->hw_key_idx = -1;
-			wcid->sw_iv = true;
+			wcid->sw_iv = false;
 		}
 
 		key = NULL;
@@ -449,7 +465,7 @@ int mt76x02_conf_tx(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	u8 cw_min = 5, cw_max = 10, qid;
 	u32 val;
 
-	qid = dev->mt76.q_tx[queue].hw_idx;
+	qid = dev->mt76.q_tx[queue].q->hw_idx;
 
 	if (params->cw_min)
 		cw_min = fls(params->cw_min);
@@ -550,22 +566,6 @@ void mt76x02_sta_rate_tbl_update(struct ieee80211_hw *hw,
 }
 EXPORT_SYMBOL_GPL(mt76x02_sta_rate_tbl_update);
 
-int mt76x02_insert_hdr_pad(struct sk_buff *skb)
-{
-	int len = ieee80211_get_hdrlen_from_skb(skb);
-
-	if (len % 4 == 0)
-		return 0;
-
-	skb_push(skb, 2);
-	memmove(skb->data, skb->data + 2, len);
-
-	skb->data[len] = 0;
-	skb->data[len + 1] = 0;
-	return 2;
-}
-EXPORT_SYMBOL_GPL(mt76x02_insert_hdr_pad);
-
 void mt76x02_remove_hdr_pad(struct sk_buff *skb, int len)
 {
 	int hdrlen;
@@ -657,29 +657,26 @@ static void mt76x02_set_beacon_offsets(struct mt76x02_dev *dev)
 
 void mt76x02_init_beacon_config(struct mt76x02_dev *dev)
 {
-	static const u8 null_addr[ETH_ALEN] = {};
 	int i;
 
-	mt76_wr(dev, MT_MAC_BSSID_DW0,
-		get_unaligned_le32(dev->mt76.macaddr));
-	mt76_wr(dev, MT_MAC_BSSID_DW1,
-		get_unaligned_le16(dev->mt76.macaddr + 4) |
-		FIELD_PREP(MT_MAC_BSSID_DW1_MBSS_MODE, 3) | /* 8 beacons */
-		MT_MAC_BSSID_DW1_MBSS_LOCAL_BIT);
+	if (mt76_is_mmio(dev)) {
+		/* Fire a pre-TBTT interrupt 8 ms before TBTT */
+		mt76_rmw_field(dev, MT_INT_TIMER_CFG, MT_INT_TIMER_CFG_PRE_TBTT,
+			       8 << 4);
+		mt76_rmw_field(dev, MT_INT_TIMER_CFG, MT_INT_TIMER_CFG_GP_TIMER,
+			       MT_DFS_GP_INTERVAL);
+		mt76_wr(dev, MT_INT_TIMER_EN, 0);
+	}
 
-	/* Fire a pre-TBTT interrupt 8 ms before TBTT */
-	mt76_rmw_field(dev, MT_INT_TIMER_CFG, MT_INT_TIMER_CFG_PRE_TBTT,
-		       8 << 4);
-	mt76_rmw_field(dev, MT_INT_TIMER_CFG, MT_INT_TIMER_CFG_GP_TIMER,
-		       MT_DFS_GP_INTERVAL);
-	mt76_wr(dev, MT_INT_TIMER_EN, 0);
-
+	mt76_clear(dev, MT_BEACON_TIME_CFG, (MT_BEACON_TIME_CFG_TIMER_EN |
+					     MT_BEACON_TIME_CFG_TBTT_EN |
+					     MT_BEACON_TIME_CFG_BEACON_TX));
+	mt76_set(dev, MT_BEACON_TIME_CFG, MT_BEACON_TIME_CFG_SYNC_MODE);
 	mt76_wr(dev, MT_BCN_BYPASS_MASK, 0xffff);
 
-	for (i = 0; i < 8; i++) {
-		mt76x02_mac_set_bssid(dev, i, null_addr);
+	for (i = 0; i < 8; i++)
 		mt76x02_mac_set_beacon(dev, i, NULL);
-	}
+
 	mt76x02_set_beacon_offsets(dev);
 }
 EXPORT_SYMBOL_GPL(mt76x02_init_beacon_config);
@@ -697,13 +694,6 @@ void mt76x02_bss_info_changed(struct ieee80211_hw *hw,
 	if (changed & BSS_CHANGED_BSSID)
 		mt76x02_mac_set_bssid(dev, mvif->idx, info->bssid);
 
-	if (changed & BSS_CHANGED_BEACON_ENABLED) {
-		tasklet_disable(&dev->pre_tbtt_tasklet);
-		mt76x02_mac_set_beacon_enable(dev, mvif->idx,
-					      info->enable_beacon);
-		tasklet_enable(&dev->pre_tbtt_tasklet);
-	}
-
 	if (changed & BSS_CHANGED_HT || changed & BSS_CHANGED_ERP_CTS_PROT)
 		mt76x02_mac_set_tx_protection(dev, info->use_cts_prot,
 					      info->ht_operation_mode);
@@ -713,8 +703,10 @@ void mt76x02_bss_info_changed(struct ieee80211_hw *hw,
 			       MT_BEACON_TIME_CFG_INTVAL,
 			       info->beacon_int << 4);
 		dev->beacon_int = info->beacon_int;
-		dev->tbtt_count = 0;
 	}
+
+	if (changed & BSS_CHANGED_BEACON_ENABLED)
+		mt76x02_mac_set_beacon_enable(dev, vif, info->enable_beacon);
 
 	if (changed & BSS_CHANGED_ERP_PREAMBLE)
 		mt76x02_mac_set_short_preamble(dev, info->use_short_preamble);

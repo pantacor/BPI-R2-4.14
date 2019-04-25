@@ -1,19 +1,4 @@
 /* SPDX-License-Identifier: ISC */
-/*
- * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
 
 #include <linux/firmware.h>
 #include "mt7603.h"
@@ -27,44 +12,6 @@ struct mt7603_fw_trailer {
 	char build_date[15];
 	__le32 dl_len;
 } __packed;
-
-static struct sk_buff *mt7603_mcu_msg_alloc(const void *data, int len)
-{
-	struct sk_buff *skb;
-
-	skb = alloc_skb(len + sizeof(struct mt7603_mcu_txd),
-			GFP_KERNEL);
-	if (!skb)
-		return NULL;
-
-	skb_reserve(skb, sizeof(struct mt7603_mcu_txd));
-	if (data && len)
-		memcpy(skb_put(skb, len), data, len);
-
-	return skb;
-}
-
-void mt7603_mcu_rx_event(struct mt7603_dev *dev, struct sk_buff *skb)
-{
-	skb_queue_tail(&dev->mt76.mmio.mcu.res_q, skb);
-	wake_up(&dev->mt76.mmio.mcu.wait);
-}
-
-static struct sk_buff *
-mt7603_mcu_get_response(struct mt7603_dev *dev, unsigned long expires)
-{
-	struct mt76_dev *mdev = &dev->mt76;
-	unsigned long timeout;
-
-	if (!time_is_after_jiffies(expires))
-		return NULL;
-
-	timeout = expires - jiffies;
-	wait_event_timeout(mdev->mmio.mcu.wait,
-			   !skb_queue_empty(&mdev->mmio.mcu.res_q),
-			   timeout);
-	return skb_dequeue(&mdev->mmio.mcu.res_q);
-}
 
 static int
 __mt7603_mcu_msg_send(struct mt7603_dev *dev, struct sk_buff *skb, int cmd,
@@ -107,7 +54,7 @@ __mt7603_mcu_msg_send(struct mt7603_dev *dev, struct sk_buff *skb, int cmd,
 	if (wait_seq)
 		*wait_seq = seq;
 
-	return mt7603_tx_queue_mcu(dev, MT_TXQ_MCU, skb);
+	return mt76_tx_queue_skb_raw(dev, MT_TXQ_MCU, skb, 0);
 }
 
 static int
@@ -128,7 +75,7 @@ mt7603_mcu_msg_send(struct mt7603_dev *dev, struct sk_buff *skb, int cmd,
 	while (1) {
 		bool check_seq = false;
 
-		skb = mt7603_mcu_get_response(dev, expires);
+		skb = mt76_mcu_get_response(&dev->mt76, expires);
 		if (!skb) {
 			dev_err(mdev->dev,
 				"MCU message %d (seq %d) timed out\n",
@@ -486,7 +433,7 @@ int mt7603_mcu_set_channel(struct mt7603_dev *dev)
 {
 	struct cfg80211_chan_def *chandef = &dev->mt76.chandef;
 	struct ieee80211_hw *hw = mt76_hw(dev);
-	int n_chains = __sw_hweight8(dev->mt76.antenna_mask);
+	int n_chains = hweight8(dev->mt76.antenna_mask);
 	struct {
 		u8 control_chan;
 		u8 center_chan;

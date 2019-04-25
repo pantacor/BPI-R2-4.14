@@ -1,25 +1,11 @@
 /* SPDX-License-Identifier: ISC */
-/*
- * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
 
 #include <linux/etherdevice.h>
 #include <linux/platform_device.h>
 #include <linux/pci.h>
 #include <linux/module.h>
 #include "mt7603.h"
+#include "mac.h"
 #include "eeprom.h"
 
 static int
@@ -45,35 +31,12 @@ mt7603_stop(struct ieee80211_hw *hw)
 	mt7603_mac_stop(dev);
 }
 
-static void
-mt7603_txq_init(struct mt7603_dev *dev, struct ieee80211_txq *txq)
-{
-	struct mt76_txq *mtxq;
-
-	if (!txq)
-		return;
-
-	mtxq = (struct mt76_txq *)txq->drv_priv;
-	if (txq->sta) {
-		struct mt7603_sta *sta;
-
-		sta = (struct mt7603_sta *)txq->sta->drv_priv;
-		mtxq->wcid = &sta->wcid;
-	} else {
-		struct mt7603_vif *mvif;
-
-		mvif = (struct mt7603_vif *)txq->vif->drv_priv;
-		mtxq->wcid = &mvif->sta.wcid;
-	}
-
-	mt76_txq_init(&dev->mt76, txq);
-}
-
 static int
 mt7603_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 {
 	struct mt7603_vif *mvif = (struct mt7603_vif *)vif->drv_priv;
 	struct mt7603_dev *dev = hw->priv;
+	struct mt76_txq *mtxq;
 	u8 bc_addr[ETH_ALEN];
 	int idx;
 	int ret = 0;
@@ -108,8 +71,10 @@ mt7603_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 	eth_broadcast_addr(bc_addr);
 	mt7603_wtbl_init(dev, idx, mvif->idx, bc_addr);
 
+	mtxq = (struct mt76_txq *)vif->txq->drv_priv;
+	mtxq->wcid = &mvif->sta.wcid;
+	mt76_txq_init(&dev->mt76, vif->txq);
 	rcu_assign_pointer(dev->mt76.wcid[idx], &mvif->sta.wcid);
-	mt7603_txq_init(dev, vif->txq);
 
 out:
 	mutex_unlock(&dev->mt76.mutex);
@@ -199,8 +164,8 @@ mt7603_set_channel(struct mt7603_dev *dev, struct cfg80211_chan_def *def)
 	idx |= (def->chan -
 		mt76_hw(dev)->wiphy->bands[def->chan->band]->channels) << 1;
 	mt76_wr(dev, MT_WF_RMAC_CH_FREQ, idx);
-	mt7603_mac_start(dev);
 	mt7603_mac_set_timing(dev);
+	mt7603_mac_start(dev);
 
 	clear_bit(MT76_RESET, &dev->mt76.state);
 
@@ -318,18 +283,12 @@ mt7603_bss_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	}
 
 	if (changed & BSS_CHANGED_ERP_SLOT) {
-		u32 val;
+		int slottime = info->use_short_slot ? 9 : 20;
 
-		dev->slottime = info->use_short_slot ? 9 : 20;
-		mt7603_mac_set_timing(dev);
-
-		if (info->use_short_slot)
-			val = MT7603_CFEND_RATE_DEFAULT;
-		else
-			val = MT7603_CFEND_RATE_11B;
-
-		mt76_rmw_field(dev, MT_AGG_CONTROL, MT_AGG_CONTROL_CFEND_RATE,
-			       val);
+		if (slottime != dev->slottime) {
+			dev->slottime = slottime;
+			mt7603_mac_set_timing(dev);
+		}
 	}
 
 	if (changed & (BSS_CHANGED_BEACON_ENABLED | BSS_CHANGED_BEACON_INT)) {
@@ -364,12 +323,20 @@ mt7603_sta_add(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 	msta->wcid.idx = idx;
 	mt7603_wtbl_init(dev, idx, mvif->idx, sta->addr);
 	mt7603_wtbl_set_ps(dev, msta, false);
-	mt7603_wtbl_update_cap(dev, sta);
 
 	if (vif->type == NL80211_IFTYPE_AP)
 		set_bit(MT_WCID_FLAG_CHECK_PS, &msta->wcid.flags);
 
 	return ret;
+}
+
+void
+mt7603_sta_assoc(struct mt76_dev *mdev, struct ieee80211_vif *vif,
+		 struct ieee80211_sta *sta)
+{
+	struct mt7603_dev *dev = container_of(mdev, struct mt7603_dev, mt76);
+
+	mt7603_wtbl_update_cap(dev, sta);
 }
 
 void
@@ -394,7 +361,8 @@ mt7603_ps_tx_list(struct mt7603_dev *dev, struct sk_buff_head *list)
 	struct sk_buff *skb;
 
 	while ((skb = __skb_dequeue(list)) != NULL)
-		mt7603_tx_queue_mcu(dev, skb_get_queue_mapping(skb), skb);
+		mt76_tx_queue_skb_raw(dev, skb_get_queue_mapping(skb),
+				      skb, 0);
 }
 
 void
@@ -419,6 +387,15 @@ mt7603_sta_ps(struct mt76_dev *mdev, struct ieee80211_sta *sta, bool ps)
 }
 
 static void
+mt7603_ps_set_more_data(struct sk_buff *skb)
+{
+	struct ieee80211_hdr *hdr;
+
+	hdr = (struct ieee80211_hdr *) &skb->data[MT_TXD_SIZE];
+	hdr->frame_control |= cpu_to_le16(IEEE80211_FCTL_MOREDATA);
+}
+
+static void
 mt7603_release_buffered_frames(struct ieee80211_hw *hw,
 			       struct ieee80211_sta *sta,
 			       u16 tids, int nframes,
@@ -432,6 +409,8 @@ mt7603_release_buffered_frames(struct ieee80211_hw *hw,
 
 	__skb_queue_head_init(&list);
 
+	mt7603_wtbl_set_ps(dev, msta, false);
+
 	spin_lock_bh(&dev->ps_lock);
 	skb_queue_walk_safe(&msta->psq, skb, tmp) {
 		if (!nframes)
@@ -442,10 +421,14 @@ mt7603_release_buffered_frames(struct ieee80211_hw *hw,
 
 		skb_set_queue_mapping(skb, MT_TXQ_PSD);
 		__skb_unlink(skb, &msta->psq);
+		mt7603_ps_set_more_data(skb);
 		__skb_queue_tail(&list, skb);
 		nframes--;
 	}
 	spin_unlock_bh(&dev->ps_lock);
+
+	if (!skb_queue_empty(&list))
+		ieee80211_sta_eosp(sta);
 
 	mt7603_ps_tx_list(dev, &list);
 
@@ -509,7 +492,7 @@ mt7603_conf_tx(struct ieee80211_hw *hw, struct ieee80211_vif *vif, u16 queue,
 	u16 cw_max = (1 << 10) - 1;
 	u32 val;
 
-	queue = dev->mt76.q_tx[queue].hw_idx;
+	queue = dev->mt76.q_tx[queue].q->hw_idx;
 
 	if (params->cw_min)
 		cw_min = params->cw_min;
@@ -661,7 +644,6 @@ mt7603_set_coverage_class(struct ieee80211_hw *hw, s16 coverage_class)
 static void mt7603_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *control,
 		      struct sk_buff *skb)
 {
-	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 	struct ieee80211_vif *vif = info->control.vif;
 	struct mt7603_dev *dev = hw->priv;
@@ -672,13 +654,7 @@ static void mt7603_tx(struct ieee80211_hw *hw, struct ieee80211_tx_control *cont
 
 		msta = (struct mt7603_sta *)control->sta->drv_priv;
 		wcid = &msta->wcid;
-		/* sw encrypted frames */
-		if (!info->control.hw_key && wcid->hw_key_idx != 0xff &&
-		    ieee80211_has_protected(hdr->frame_control))
-			control->sta = NULL;
-	}
-
-	if (vif && !control->sta) {
+	} else if (vif) {
 		struct mt7603_vif *mvif;
 
 		mvif = (struct mt7603_vif *)vif->drv_priv;

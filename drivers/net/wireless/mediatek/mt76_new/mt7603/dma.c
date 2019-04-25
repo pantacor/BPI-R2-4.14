@@ -1,60 +1,26 @@
 /* SPDX-License-Identifier: ISC */
-/*
- * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
 
 #include "mt7603.h"
 #include "mac.h"
 #include "../dma.h"
 
-int
-mt7603_tx_queue_mcu(struct mt7603_dev *dev, enum mt76_txq_id qid,
-		    struct sk_buff *skb)
-{
-	struct mt76_queue *q = &dev->mt76.q_tx[qid];
-	struct mt76_queue_buf buf;
-	dma_addr_t addr;
-
-	addr = dma_map_single(dev->mt76.dev, skb->data, skb->len,
-			      DMA_TO_DEVICE);
-	if (dma_mapping_error(dev->mt76.dev, addr))
-		return -ENOMEM;
-
-	buf.addr = addr;
-	buf.len = skb->len;
-	spin_lock_bh(&q->lock);
-	mt76_queue_add_buf(dev, q, &buf, 1, 0, skb, NULL);
-	mt76_queue_kick(dev, q);
-	spin_unlock_bh(&q->lock);
-
-	return 0;
-}
-
 static int
-mt7603_init_tx_queue(struct mt7603_dev *dev, struct mt76_queue *q,
+mt7603_init_tx_queue(struct mt7603_dev *dev, struct mt76_sw_queue *q,
 		     int idx, int n_desc)
 {
-	int ret;
+	struct mt76_queue *hwq;
+	int err;
 
-	q->hw_idx = idx;
-	q->regs = dev->mt76.mmio.regs + MT_TX_RING_BASE + idx * MT_RING_SIZE;
-	q->ndesc = n_desc;
+	hwq = devm_kzalloc(dev->mt76.dev, sizeof(*hwq), GFP_KERNEL);
+	if (!hwq)
+		return -ENOMEM;
 
-	ret = mt76_queue_alloc(dev, q);
-	if (ret)
-		return ret;
+	err = mt76_queue_alloc(dev, hwq, idx, n_desc, 0, MT_TX_RING_BASE);
+	if (err < 0)
+		return err;
+
+	INIT_LIST_HEAD(&q->swq);
+	q->q = hwq;
 
 	mt7603_irq_enable(dev, MT_INT_TX_DONE(idx));
 
@@ -65,12 +31,16 @@ static void
 mt7603_rx_loopback_skb(struct mt7603_dev *dev, struct sk_buff *skb)
 {
 	__le32 *txd = (__le32 *)skb->data;
+	struct ieee80211_hdr *hdr;
+	struct ieee80211_sta *sta;
 	struct mt7603_sta *msta;
 	struct mt76_wcid *wcid;
+	void *priv;
 	int idx;
 	u32 val;
+	u8 tid;
 
-	if (skb->len < sizeof(MT_TXD_SIZE) + sizeof(struct ieee80211_hdr))
+	if (skb->len < MT_TXD_SIZE + sizeof(struct ieee80211_hdr))
 		goto free;
 
 	val = le32_to_cpu(txd[1]);
@@ -84,12 +54,25 @@ mt7603_rx_loopback_skb(struct mt7603_dev *dev, struct sk_buff *skb)
 	if (!wcid)
 		goto free;
 
-	msta = container_of(wcid, struct mt7603_sta, wcid);
+	priv = msta = container_of(wcid, struct mt7603_sta, wcid);
 	val = le32_to_cpu(txd[0]);
 	skb_set_queue_mapping(skb, FIELD_GET(MT_TXD0_Q_IDX, val));
 
+	val &= ~(MT_TXD0_P_IDX | MT_TXD0_Q_IDX);
+	val |= FIELD_PREP(MT_TXD0_Q_IDX, MT_TX_HW_QUEUE_MGMT);
+	txd[0] = cpu_to_le32(val);
+
+	sta = container_of(priv, struct ieee80211_sta, drv_priv);
+	hdr = (struct ieee80211_hdr *) &skb->data[MT_TXD_SIZE];
+	tid = *ieee80211_get_qos_ctl(hdr) & IEEE80211_QOS_CTL_TID_MASK;
+	ieee80211_sta_set_buffered(sta, tid, true);
+
 	spin_lock_bh(&dev->ps_lock);
 	__skb_queue_tail(&msta->psq, skb);
+	if (skb_queue_len(&msta->psq) >= 64) {
+		skb = __skb_dequeue(&msta->psq);
+		dev_kfree_skb(skb);
+	}
 	spin_unlock_bh(&dev->ps_lock);
 	return;
 
@@ -109,7 +92,7 @@ void mt7603_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 
 	if (q == MT_RXQ_MCU) {
 		if (type == PKT_TYPE_RX_EVENT)
-			mt7603_mcu_rx_event(dev, skb);
+			mt76_mcu_rx_event(&dev->mt76, skb);
 		else
 			mt7603_rx_loopback_skb(dev, skb);
 		return;
@@ -122,7 +105,7 @@ void mt7603_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 		dev_kfree_skb(skb);
 		break;
 	case PKT_TYPE_RX_EVENT:
-		mt7603_mcu_rx_event(dev, skb);
+		mt76_mcu_rx_event(&dev->mt76, skb);
 		return;
 	case PKT_TYPE_NORMAL:
 		if (mt7603_mac_fill_rx(dev, skb) == 0) {
@@ -140,15 +123,12 @@ static int
 mt7603_init_rx_queue(struct mt7603_dev *dev, struct mt76_queue *q,
 		     int idx, int n_desc, int bufsize)
 {
-	int ret;
+	int err;
 
-	q->regs = dev->mt76.mmio.regs + MT_RX_RING_BASE + idx * MT_RING_SIZE;
-	q->ndesc = n_desc;
-	q->buf_size = bufsize;
-
-	ret = mt76_queue_alloc(dev, q);
-	if (ret)
-		return ret;
+	err = mt76_queue_alloc(dev, q, idx, n_desc, bufsize,
+			       MT_RX_RING_BASE);
+	if (err < 0)
+		return err;
 
 	mt7603_irq_enable(dev, MT_INT_RX_DONE(idx));
 
@@ -193,6 +173,7 @@ int mt7603_dma_init(struct mt7603_dev *dev)
 		   MT_WPDMA_GLO_CFG_TX_WRITEBACK_DONE);
 
 	mt76_wr(dev, MT_WPDMA_RST_IDX, ~0);
+	mt7603_pse_client_reset(dev);
 
 	for (i = 0; i < ARRAY_SIZE(wmm_queue_map); i++) {
 		ret = mt7603_init_tx_queue(dev, &dev->mt76.q_tx[i],

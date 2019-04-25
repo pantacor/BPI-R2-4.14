@@ -1,19 +1,4 @@
 /* SPDX-License-Identifier: ISC */
-/*
- * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -30,6 +15,7 @@ static int
 mt76pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct mt7603_dev *dev;
+	struct mt76_dev *mdev;
 	int ret;
 
 	ret = pcim_enable_device(pdev);
@@ -46,17 +32,19 @@ mt76pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		return ret;
 
-	dev = mt7603_alloc_device(&pdev->dev);
-	if (!dev)
+	mdev = mt76_alloc_device(&pdev->dev, sizeof(*dev), &mt7603_ops,
+				 &mt7603_drv_ops);
+	if (!mdev)
 		return -ENOMEM;
 
-	mt76_mmio_init(&dev->mt76, pcim_iomap_table(pdev)[0]);
+	dev = container_of(mdev, struct mt7603_dev, mt76);
+	mt76_mmio_init(mdev, pcim_iomap_table(pdev)[0]);
 
-	dev->mt76.rev = (mt76_rr(dev, MT_HW_CHIPID) << 16) |
-			(mt76_rr(dev, MT_HW_REV) & 0xff);
-	dev_info(dev->mt76.dev, "ASIC revision: %04x\n", dev->mt76.rev);
+	mdev->rev = (mt76_rr(dev, MT_HW_CHIPID) << 16) |
+		    (mt76_rr(dev, MT_HW_REV) & 0xff);
+	dev_info(mdev->dev, "ASIC revision: %04x\n", mdev->rev);
 
-	ret = devm_request_irq(dev->mt76.dev, pdev->irq, mt7603_irq_handler,
+	ret = devm_request_irq(mdev->dev, pdev->irq, mt7603_irq_handler,
 			       IRQF_SHARED, KBUILD_MODNAME, dev);
 	if (ret)
 		goto error;
