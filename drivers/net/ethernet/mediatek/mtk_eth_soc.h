@@ -697,6 +697,7 @@ struct mtk_eth {
 struct mtk_mac {
 	int				id;
 	phy_interface_t			interface;
+	unsigned int			mode;
 	struct device_node		*of_node;
 	struct phylink 			*phylink;
 	struct mtk_eth			*hw;

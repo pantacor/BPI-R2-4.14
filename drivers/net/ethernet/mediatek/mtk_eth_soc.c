@@ -332,7 +332,11 @@ static void mtk_mac_config(struct net_device *ndev, unsigned int mode,
 		pr_warn("mtk_mac_config_hw: GMAC%d: mode %s\n", mac->id, phy_modes(state->interface));
 	}
 
+	/* Setup SGMII */
 	if (mac->interface == PHY_INTERFACE_MODE_SGMII) {
+		if (mode == mac->mode)
+			return;
+		mac->mode = mode;
 		if (!eth->ethsys) {
 			pr_warn("mtk_mac_config_hw: No ethsys set in DTS!\n");
 			return;
@@ -2578,6 +2582,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 	/* mac config is not set */
 	mac->interface = PHY_INTERFACE_MODE_NA;
+	mac->mode = MLO_AN_PHY;
 
 	phylink = phylink_create(eth->netdev[id], of_fwnode_handle(mac->of_node),
 				 phy_mode, &mtk_phylink_ops);
