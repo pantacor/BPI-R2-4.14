@@ -387,6 +387,7 @@
 #define SYSCFG0_SGMII_MASK	(3 << 8)
 #define SYSCFG0_SGMII_GMAC1	((2 << 8) & GENMASK(9, 8))
 #define SYSCFG0_SGMII_GMAC2	((3 << 8) & GENMASK(9, 8))
+#define SYSCFG0_SGMII_GMAC2_V2  ((1 << 8) & GENMASK(9, 8))
 
 #define	NUM_TRGMII_CTRL			5
 
