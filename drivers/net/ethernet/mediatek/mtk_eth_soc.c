@@ -190,26 +190,26 @@ static void mtk_sgmii_setup_mode_force(struct mtk_eth *eth, int speed)
 {
 	unsigned int val;
 
-	regmap_read(eth->ethsys, SGMSYS_ANA_RG_CS3, &val);
+	regmap_read(eth->sgmiisys, SGMSYS_ANA_RG_CS3, &val);
 	val &= ~RG_PHY_SPEED_MASK;
 	if (speed == SPEED_2500)
 		/* SGMII 2.5G */
 		val |= RG_PHY_SPEED_3_125G;
-	regmap_write(eth->ethsys, SGMSYS_ANA_RG_CS3, val);
+	regmap_write(eth->sgmiisys, SGMSYS_ANA_RG_CS3, val);
 
 	/* disable SGMII AN */
-	regmap_read(eth->ethsys, SGMSYS_PCS_CONTROL_1, &val);
+	regmap_read(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, &val);
 	val &= ~BIT(12);
-	regmap_write(eth->ethsys, SGMSYS_PCS_CONTROL_1, val);
+	regmap_write(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, val);
 
 	/* SGMII force mode setting */
 	val = 0x31120019;
-	regmap_write(eth->ethsys, SGMSYS_SGMII_MODE, val);
+	regmap_write(eth->sgmiisys, SGMSYS_SGMII_MODE, val);
 
 	/* Release PHYA power down state */
-	regmap_read(eth->ethsys, SGMSYS_QPHY_PWR_STATE_CTRL, &val);
+	regmap_read(eth->sgmiisys, SGMSYS_QPHY_PWR_STATE_CTRL, &val);
 	val &= ~SGMII_PHYA_PWD;
-	regmap_write(eth->ethsys, SGMSYS_QPHY_PWR_STATE_CTRL, val);
+	regmap_write(eth->sgmiisys, SGMSYS_QPHY_PWR_STATE_CTRL, val);
 }
 
 static void mtk_sgmii_setup_mode_an(struct mtk_eth *eth)
@@ -217,20 +217,20 @@ static void mtk_sgmii_setup_mode_an(struct mtk_eth *eth)
 	unsigned int val;
 
 	/* Setup the link timer and QPHY power up inside SGMIISYS */
-	regmap_write(eth->ethsys, SGMSYS_PCS_LINK_TIMER,
+	regmap_write(eth->sgmiisys, SGMSYS_PCS_LINK_TIMER,
 		     SGMII_LINK_TIMER_DEFAULT);
 
-	regmap_read(eth->ethsys, SGMSYS_SGMII_MODE, &val);
+	regmap_read(eth->sgmiisys, SGMSYS_SGMII_MODE, &val);
 	val |= SGMII_REMOTE_FAULT_DIS;
-	regmap_write(eth->ethsys, SGMSYS_SGMII_MODE, val);
+	regmap_write(eth->sgmiisys, SGMSYS_SGMII_MODE, val);
 
-	regmap_read(eth->ethsys, SGMSYS_PCS_CONTROL_1, &val);
+	regmap_read(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, &val);
 	val |= SGMII_AN_RESTART;
-	regmap_write(eth->ethsys, SGMSYS_PCS_CONTROL_1, val);
+	regmap_write(eth->sgmiisys, SGMSYS_PCS_CONTROL_1, val);
 
-	regmap_read(eth->ethsys, SGMSYS_QPHY_PWR_STATE_CTRL, &val);
+	regmap_read(eth->sgmiisys, SGMSYS_QPHY_PWR_STATE_CTRL, &val);
 	val &= ~SGMII_PHYA_PWD;
-	regmap_write(eth->ethsys, SGMSYS_QPHY_PWR_STATE_CTRL, val);
+	regmap_write(eth->sgmiisys, SGMSYS_QPHY_PWR_STATE_CTRL, val);
 }
 
 static void mtk_gmac_sgmii_hw_setup(struct mtk_eth *eth, int mac_id,
@@ -420,7 +420,6 @@ static void mtk_mac_an_restart(struct net_device *ndev)
 {
 	pr_warn("mtk_mac_an_restart\n");
 }
-
 
 static void mtk_mac_link_down(struct net_device *ndev, unsigned int mode,
 			      phy_interface_t interface)
