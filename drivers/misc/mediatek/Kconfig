@@ -1,5 +1,5 @@
 menu "Mediatek Peripherals "
-
+depends on ARM
 config MTK_PLATFORM
         string "MTK platform name"
 source "drivers/misc/mediatek/btif/Kconfig"
