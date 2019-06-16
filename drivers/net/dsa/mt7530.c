@@ -435,11 +435,20 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 		trgint = 0;
 		ncpo1 = 0x0c80;
 		ssc_delta = 0x87;
+
+		/* Port 6 delay settings RGMII central align */
+		mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, BIT(30) | BIT(28), 0);
+		mt7530_write(priv, MT7530_TRGMII_TCK_CTRL, 0x0855);
 		break;
 	case PHY_INTERFACE_MODE_TRGMII:
 		trgint = 1;
-		ncpo1 = 0x1400;
+		/* PLL frequency: MT7621 150MHz, other 162.5MHz */
+		ncpo1 = (priv->id == ID_MT7621 ? 0x0780 : 0x1400);
 		ssc_delta = 0x57;
+
+		/* Port 6 delay settings TRGMII central align */
+		mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, 0, BIT(30));
+		mt7530_write(priv, MT7530_TRGMII_TCK_CTRL, 0x0055);
 		break;
 	default:
 		dev_err(priv->dev, "xMII mode %d not supported\n", mode);
@@ -507,7 +516,9 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 			mt7530_rmw(priv, MT7530_TRGMII_RD(i),
 				   RD_TAP_MASK, RD_TAP(16));
 	else
-		mt7623_trgmii_set(priv, GSW_INTF_MODE, INTF_MODE_TRGMII);
+		if (priv->id != ID_MT7621)
+			mt7623_trgmii_set(priv, GSW_INTF_MODE,
+					  INTF_MODE_TRGMII);
 
 	return 0;
 }
