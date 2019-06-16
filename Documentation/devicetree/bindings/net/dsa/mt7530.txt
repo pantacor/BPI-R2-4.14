@@ -35,6 +35,35 @@ Required properties for the child nodes within ports container:
 - phy-mode: String, must be either "trgmii" or "rgmii" for port labeled
 	 "cpu".
 
+In the case of a build-in MT7530 switch, port 5 shares the RGMII bus with
+2nd GMAC and optional external phy.
+
+Port 5 modes/configurations:
+1. P5 is disabled and isolated: External phy can talk to 2nd GMAC of the SOC.
+   Mind the GPIO/pinctl settings of the SOC!
+2. P5 connects to the internal PHY of P0/P4: P0/4 interfaces with 2nd GMAC.
+   It is a simple mac to phy interface, P5 needs to be setup for rgmii modes.
+   Used in many setups where P0/P4 becomes the WAN port of the device.
+3. P5 interface connects to GMAC5 and talks to an external phy
+   P5 becomes an extra switch port.
+   Only works on platform where external phy TX<->RX lines are swapped.
+   Like in the Ubiquiti ER-X-SFP.
+4. P5 interface connects GMAC5 to 2nd gmac serves as 2nd CPU port.
+   Currently a 2nd CPU port is not supported by DSA code.
+
+Depening on how the externel phy is wired:
+* normal: The phy can only connect to 2nd GMAC but not to the switch
+* swapped:  RGMII TX, RX are swapped; external phy can connect the switch as a
+  ethernet port. But can't talk to the 2nd GMAC.
+
+Based on the DT the port 5 mode is configured.
+
+Driver tries to lookup the phy-handle of the 2nd GMAC of the master device.
+If it matches phy P0 or P4 then port 5 set-up as mode 2.
+phy-mode must be set, see example 2 below!
+mt7621: phy-mode = "rgmii-txid";
+mt7623: phy-mode = "rgmii";
+
 See Documentation/devicetree/bindings/net/dsa/dsa.txt for a list of additional
 required, optional properties and how the integrated switch subnodes must
 be specified.
@@ -94,3 +123,95 @@ Example:
 			};
 		};
 	};
+
+Example 2: MT7621: Port 4 is WAN port: 2nd GMAC -> P5 -> PHY P4.
+
+&eth {
+	status = "okay";
+
+	gmac0: mac@0 {
+		compatible = "mediatek,eth-mac";
+		reg = <0>;
+		phy-mode = "rgmii";
+
+		fixed-link {
+			speed = <1000>;
+			full-duplex;
+			pause;
+		};
+	};
+
+	gmac1: mac@1 {
+		compatible = "mediatek,eth-mac";
+		reg = <1>;
+		phy-mode = "rgmii-txid";
+		phy-handle = <&phy4>;
+	};
+
+	mdio: mdio-bus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Internal phy */
+		phy4: ethernet-phy@4 {
+			reg = <4>;
+		};
+
+		mt7530: switch@1f {
+			compatible = "mediatek,mt7621";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x1f>;
+			pinctrl-names = "default";
+			mediatek,mcm;
+
+			resets = <&rstctrl 2>;
+			reset-names = "mcm";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					label = "lan0";
+				};
+
+				port@1 {
+					reg = <1>;
+					label = "lan1";
+				};
+
+				port@2 {
+					reg = <2>;
+					label = "lan2";
+				};
+
+				port@3 {
+					reg = <3>;
+					label = "lan3";
+				};
+
+/* Commented out. Port is handled by 2nd GMAC.
+				port@4 {
+					reg = <4>;
+					label = "lan4";
+				};
+*/
+
+				cpu_port0: port@6 {
+					reg = <6>;
+					label = "cpu";
+					ethernet = <&gmac0>;
+					phy-mode = "rgmii";
+
+					fixed-link {
+						speed = <1000>;
+						full-duplex;
+						pause;
+					};
+				};
+			};
+		};
+	};
+};
