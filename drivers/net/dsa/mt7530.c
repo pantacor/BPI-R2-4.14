@@ -430,16 +430,25 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 	struct mt7530_priv *priv = ds->priv;
 	u32 ncpo1, ssc_delta, trgint, i;
 
+	if ((mt7530_read(priv, MT7530_MHWTRAP) >> 9) & 0x3 != 0x2) {
+		dev_err(priv->dev, "Only support XTAL of 40MHz!\n");
+		return -EINVAL;
+	}
+
 	switch (mode) {
 	case PHY_INTERFACE_MODE_RGMII:
 		trgint = 0;
+		/* PLL frequency: 125MHz */
 		ncpo1 = 0x0c80;
 		ssc_delta = 0x87;
 		break;
 	case PHY_INTERFACE_MODE_TRGMII:
 		trgint = 1;
-		ncpo1 = 0x1400;
+		/* PLL frequency: MT7621 150MHz, other 250MHz */
+		ncpo1 = (priv->id == ID_MT7621 ? 0x0780 : 0x1400);
 		ssc_delta = 0x57;
+		mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, BIT(30), 0);
+		mt7530_write(priv, MT7530_TRGMII_TCK_CTRL, 0x0855);
 		break;
 	default:
 		dev_err(priv->dev, "xMII mode %d not supported\n", mode);
@@ -507,7 +516,9 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 			mt7530_rmw(priv, MT7530_TRGMII_RD(i),
 				   RD_TAP_MASK, RD_TAP(16));
 	else
-		mt7623_trgmii_set(priv, GSW_INTF_MODE, INTF_MODE_TRGMII);
+		if (priv->id != ID_MT7621)
+			mt7623_trgmii_set(priv, GSW_INTF_MODE,
+					  INTF_MODE_TRGMII);
 
 	return 0;
 }
