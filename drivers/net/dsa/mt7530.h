@@ -254,6 +254,10 @@ enum mt7530_vlan_port_attr {
 
 /* Register for hw trap status */
 #define MT7530_HWTRAP			0x7800
+#define  HWTRAP_XTAL_MASK		(BIT(10) | BIT(9))
+#define  HWTRAP_XTAL_25MHZ		(BIT(10) | BIT(9))
+#define  HWTRAP_XTAL_40MHZ		(BIT(10))
+#define  HWTRAP_XTAL_20MHZ		(BIT(9))
 
 /* Register for hw trap modification */
 #define MT7530_MHWTRAP			0x7804
@@ -423,6 +427,15 @@ enum p5_mode {
 	P5_MODE_GMAC,
 };
 
+/* Port 6 Mode definitions */
+enum p6_mode {
+	P6_MODE_NA = 0,
+	P6_RGMII_1000_FULL,
+	P6_TRGMII_1200_FULL,
+	P6_TRGMII_2000_FULL,
+	P6_TRGMII_2600_FULL,
+};
+
 static const char *p5_modes(unsigned int p5_mode)
 {
 	switch (p5_mode) {
@@ -468,6 +481,7 @@ struct mt7530_priv {
 	unsigned int		id;
 	bool			mcm;
 	unsigned int		p5_mode;
+	unsigned int		p6_mode;
 
 	struct mt7530_port	ports[MT7530_NUM_PORTS];
 	/* protect among processes for registers access*/

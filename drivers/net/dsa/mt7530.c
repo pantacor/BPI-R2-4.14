@@ -428,32 +428,54 @@ static int
 mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 {
 	struct mt7530_priv *priv = ds->priv;
-	u32 ncpo1, ssc_delta, trgint, i;
+	u32 ncpo1, ssc_delta, trgint, i, xtal;
 
-	if ((mt7530_read(priv, MT7530_MHWTRAP) >> 9) & 0x3 != 0x2) {
-		dev_err(priv->dev, "Only support XTAL of 40MHz!\n");
-		return -EINVAL;
-	}
+	xtal = mt7530_read(priv, MT7530_MHWTRAP) & HWTRAP_XTAL_MASK;
+	pr_info("%s: XTAL: 0x%x\n", __func__, xtal);
+
+	/* simple debug */
+	if (xtal == HWTRAP_XTAL_25MHZ)
+		pr_info("XTAL 25MHz\n");
+	if (xtal == HWTRAP_XTAL_40MHZ)
+		pr_info("XTAL 40MHz\n");
+	if (xtal == HWTRAP_XTAL_20MHZ)
+		pr_info("XTAL 20MHz\n");
 
 	switch (mode) {
 	case PHY_INTERFACE_MODE_RGMII:
 		trgint = 0;
 		/* PLL frequency: 125MHz */
 		ncpo1 = 0x0c80;
-		ssc_delta = 0x87;
 		break;
 	case PHY_INTERFACE_MODE_TRGMII:
 		trgint = 1;
 		/* PLL frequency: MT7621 150MHz, other 250MHz */
-		ncpo1 = (priv->id == ID_MT7621 ? 0x0780 : 0x1400);
-		ssc_delta = 0x57;
-		mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, BIT(30), 0);
-		mt7530_write(priv, MT7530_TRGMII_TCK_CTRL, 0x0855);
+		if (priv->id == ID_MT7621) {
+			if (xtal == HWTRAP_XTAL_40MHZ)
+				ncpo1 = 0x0780;
+			if (xtal == HWTRAP_XTAL_25MHZ)
+				ncpo1 = 0x0a00;
+		} else {
+			if (xtal == HWTRAP_XTAL_40MHZ)
+				ncpo1 = 0x0c80;
+			if (xtal == HWTRAP_XTAL_25MHZ)
+				ncpo1 = 0x1400;
+
+			mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, BIT(30) | BIT(28), 0);
+			mt7530_write(priv, MT7530_TRGMII_TCK_CTRL, 0x055);
+		}
 		break;
 	default:
 		dev_err(priv->dev, "xMII mode %d not supported\n", mode);
 		return -EINVAL;
 	}
+
+	if (xtal == HWTRAP_XTAL_25MHZ)
+		ssc_delta = 0x57;
+	else
+		ssc_delta = 0x87;
+
+	pr_info("ncpo1 = 0x%x; ssc_delta = 0x%x\n", ncpo1, ssc_delta);
 
 	mt7530_rmw(priv, MT7530_P6ECR, P6_INTF_MODE_MASK,
 		   P6_INTF_MODE(trgint));
@@ -690,6 +712,9 @@ static int
 mt7530_cpu_port_enable(struct mt7530_priv *priv,
 		       int port)
 {
+
+	pr_info("%s: P%d: cpu_enable\n", __func__, port);
+
 	/* Enable Mediatek header mode on the cpu port */
 	mt7530_write(priv, MT7530_PVC_P(port),
 		     PORT_SPEC_TAG);
@@ -723,6 +748,8 @@ mt7530_port_enable(struct dsa_switch *ds, int port,
 	struct mt7530_priv *priv = ds->priv;
 
 	mutex_lock(&priv->reg_mutex);
+
+	dev_info(ds->dev, "P%d: enable; %s\n", port, phy_modes(phy->interface));
 
 	/* Setup the MAC for the user port */
 	mt7530_write(priv, MT7530_PMCR_P(port), PMCR_USERP_LINK);
@@ -1317,6 +1344,7 @@ mt7530_setup(struct dsa_switch *ds)
 
 	/* Setup port 5 */
 	priv->p5_mode = P5_MODE_DISABLED;
+	priv->p6_mode = P6_MODE_NA;
 	interface = PHY_INTERFACE_MODE_NA;
 
 	if (!dsa_is_unused_port(ds, 5)) {
@@ -1354,6 +1382,8 @@ mt7530_setup(struct dsa_switch *ds)
 	if (ret < 0)
 		return ret;
 
+	dev_info(priv->dev, "%s: end", __func__);
+
 	return 0;
 }
 
@@ -1364,6 +1394,8 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 	struct mt7530_priv *priv = ds->priv;
 	u32 mcr = PMCR_IFG_XMIT(1) | PMCR_MAC_MODE | PMCR_BACKOFF_EN |
 		  PMCR_BACKPR_EN | PMCR_TX_EN | PMCR_RX_EN;
+
+	dev_info(ds->dev, "%s: P%d: %s", __func__, port, phy_modes(state->interface));
 
 	switch (port) {
 	case 0: /* Internal phy */
@@ -1393,6 +1425,10 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 		    state->interface != PHY_INTERFACE_MODE_TRGMII)
 			goto unsupported;
 
+		if (priv->p6_mode != P6_MODE_NA)
+			break;
+
+		priv->p6_mode = 1;
 		/* Setup TX circuit incluing relevant PAD and driving */
 		mt7530_pad_clk_setup(ds, state->interface);
 
@@ -1458,6 +1494,8 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 {
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
 
+	dev_info(ds->dev, "%s: P%d: [%s]", __func__, port, phy_modes(state->interface));
+
 	switch (port) {
 	case 0: /* Internal phy */
 	case 1:
@@ -1473,14 +1511,15 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 	case 5: /* 2nd cpu port with phy of port 0 or 4 / external phy */
 		if (!phy_interface_mode_is_rgmii(state->interface) &&
 		    state->interface != PHY_INTERFACE_MODE_MII &&
-		    state->interface != PHY_INTERFACE_MODE_NA &&
-		    state->interface != PHY_INTERFACE_MODE_INTERNAL)
+		    state->interface != PHY_INTERFACE_MODE_NA)
 			goto unsupported;
+		phylink_set(mask, MII);
 		break;
 	case 6: /* 1st cpu port */
 		if (state->interface != PHY_INTERFACE_MODE_RGMII &&
 		    state->interface != PHY_INTERFACE_MODE_TRGMII)
 			goto unsupported;
+		phylink_set(mask, MII);
 		break;
 	default:
 		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
@@ -1491,14 +1530,16 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 	phylink_set(mask, Autoneg);
 	phylink_set(mask, Pause);
 	phylink_set(mask, Asym_Pause);
-	phylink_set(mask, MII);
 
 	phylink_set(mask, 10baseT_Half);
 	phylink_set(mask, 10baseT_Full);
 	phylink_set(mask, 100baseT_Half);
 	phylink_set(mask, 100baseT_Full);
-	phylink_set(mask, 1000baseT_Full);
-	phylink_set(mask, 1000baseT_Half);
+
+	if (state->interface != PHY_INTERFACE_MODE_MII) {
+		phylink_set(mask, 1000baseT_Full);
+		phylink_set(mask, 1000baseT_Half);
+	}
 
 	bitmap_and(supported, supported, mask,
 		   __ETHTOOL_LINK_MODE_MASK_NBITS);
