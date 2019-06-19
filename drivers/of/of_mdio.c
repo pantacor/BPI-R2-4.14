@@ -461,6 +461,7 @@ int of_phy_register_fixed_link(struct device_node *np)
 	struct device_node *fixed_link_node;
 	u32 fixed_link_prop[5];
 	const char *managed;
+	int ret;
 
 	if (of_property_read_string(np, "managed", &managed) == 0 &&
 	    strcmp(managed, "in-band-status") == 0) {
@@ -498,10 +499,13 @@ int of_phy_register_fixed_link(struct device_node *np)
 		goto register_phy;
 	}
 
+	pr_info("%s: broke\n", __func__);
 	return -ENODEV;
 
 register_phy:
-	return PTR_ERR_OR_ZERO(fixed_phy_register(PHY_POLL, &status, np));
+	ret = PTR_ERR_OR_ZERO(fixed_phy_register(PHY_POLL, &status, np));
+	pr_info("%s: done: 0x%x\n", __func__, ret);
+	return ret;
 }
 EXPORT_SYMBOL(of_phy_register_fixed_link);
 
