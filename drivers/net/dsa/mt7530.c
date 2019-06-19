@@ -1377,6 +1377,23 @@ mt7530_setup(struct dsa_switch *ds)
 
 	mt7530_setup_port5(ds, interface);
 
+	for (i = 0; i < MT7530_NUM_PORTS; i++) {
+		switch (dsa_to_port(ds, i)->type) {
+		case DSA_PORT_TYPE_UNUSED:
+			pr_info("P%d: UNUSED\n", i);
+			break;
+		case DSA_PORT_TYPE_CPU:
+			pr_info("P%d: CPU\n", i);
+			break;
+		case DSA_PORT_TYPE_DSA:
+			pr_info("P%d: DSA\n", i);
+			break;
+		case DSA_PORT_TYPE_USER:
+			pr_info("P%d: USER\n", i);
+			break;
+		}
+	}
+
 	/* Flush the FDB table */
 	ret = mt7530_fdb_cmd(priv, MT7530_FDB_FLUSH, NULL);
 	if (ret < 0)
