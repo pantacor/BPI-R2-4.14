@@ -1376,6 +1376,8 @@ static void mt7530_phylink_mac_config(struct dsa_switch *ds, int port,
 				      unsigned int mode,
 				      const struct phylink_link_state *state)
 {
+	dev_info(ds->dev, "%s: P%d: 0x%x (%s)\n", __func__, port, mode, phy_modes(state->interface));
+
 	struct mt7530_priv *priv = ds->priv;
 	u32 mcr = PMCR_IFG_XMIT(1) | PMCR_MAC_MODE | PMCR_BACKOFF_EN |
 		  PMCR_BACKPR_EN | PMCR_TX_EN | PMCR_RX_EN;
@@ -1472,6 +1474,8 @@ static void mt7530_phylink_validate(struct dsa_switch *ds, int port,
 				    struct phylink_link_state *state)
 {
 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+
+	dev_info(ds->dev, "%s: P%d: [%s]\n", __func__, port, phy_modes(state->interface));
 
 	switch (port) {
 	case 0: /* Internal phy */
