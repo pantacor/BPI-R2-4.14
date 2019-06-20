@@ -460,9 +460,6 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 				ncpo1 = 0x0c80;
 			if (xtal == HWTRAP_XTAL_25MHZ)
 				ncpo1 = 0x1400;
-
-			mt7530_rmw(priv, MT7530_TRGMII_TXCTRL, BIT(30) | BIT(28), 0);
-			mt7530_write(priv, MT7530_TRGMII_TCK_CTRL, 0x055);
 		}
 		break;
 	default:
