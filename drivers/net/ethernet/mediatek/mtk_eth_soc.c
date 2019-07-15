@@ -338,12 +338,14 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		regmap_update_bits(eth->ethsys, ETHSYS_SYSCFG0,
 				   SYSCFG0_SGMII_MASK, val);
 
-		return;
+		/* Return disables like old phylink code */
+		// return;
 	}
-
+	else {
 	if (phylink_autoneg_inband(mode)) {
 		dev_err(eth->dev, "In-band mode not supported in xMII mode!\n");
 		return;
+	}
 	}
 
 	/* Setup xMII MAC */
@@ -356,6 +358,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 		   MAC_MCR_BACKOFF_EN | MAC_MCR_BACKPR_EN | MAC_MCR_FORCE_LINK;
 
 	switch (state->speed) {
+	case SPEED_2500:
 	case SPEED_1000:
 		mcr_new |= MAC_MCR_SPEED_1000;
 		break;
