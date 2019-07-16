@@ -383,6 +383,8 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 			mcr_new |= MAC_MCR_FORCE_TX_FC;
 		if (state->pause & MLO_PAUSE_RX)
 			mcr_new |= MAC_MCR_FORCE_RX_FC;
+		/* Force PAUSE bits in FULL DUPLEX MODE */
+		mcr_new |= MAC_MCR_FORCE_TX_FC | MAC_MCR_FORCE_RX_FC;
 	}
 
 	/* Only update control register when needed! */
