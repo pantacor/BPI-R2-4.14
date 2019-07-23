@@ -812,7 +812,6 @@
 			 <&g3dsys CLK_G3DSYS_CORE>;
 		clock-names = "bus", "core";
 		power-domains = <&scpsys MT2701_POWER_DOMAIN_MFG>;
-		mediatek,larb = <&larb3>;
 		resets = <&g3dsys MT2701_G3DSYS_CORE_RST>;
 	};
 
