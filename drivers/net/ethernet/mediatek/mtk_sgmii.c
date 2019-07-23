@@ -78,7 +78,13 @@ int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id, int speed)
 	regmap_write(ss->regmap[id], SGMSYS_PCS_CONTROL_1, val);
 
 	/* SGMII force mode setting */
-	val = SGMII_FIXED_LINK;
+	//val = SGMII_FIXED_LINK; //don't work
+	//val = 0x31120019; //original-value
+	//val = SGMII_FIXED_LINK | BIT(17) | BIT(20) | BIT(24) | BIT(28) | BIT(29);
+	regmap_read(ss->regmap[id],  SGMSYS_SGMII_MODE, &val);
+	val &= ~(BIT(1) | BIT(2) | BIT(3) | BIT(4));
+	val |= SGMII_FIXED_LINK;
+	printk(KERN_ALERT "DEBUG: Passed %s %d val:0x%x\n",__FUNCTION__,__LINE__,val);
 	regmap_write(ss->regmap[id], SGMSYS_SGMII_MODE, val);
 
 	/* Release PHYA power down state */
