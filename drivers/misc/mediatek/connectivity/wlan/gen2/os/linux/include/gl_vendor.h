@@ -86,8 +86,18 @@ typedef enum {
 	WIFI_SUBCMD_NODFS_SET,                           /* 0x0004 */
 	WIFI_SUBCMD_SET_COUNTRY_CODE,                    /* 0x0005 */
 	/* Add more sub commands here */
-
+	WIFI_SUBCMD_MAX
 } WIFI_SUB_COMMAND;
+
+static const struct nla_policy
+wifi_vendor_test_policy[WIFI_SUBCMD_MAX + 1] = {
+	[WIFI_SUBCMD_GET_CHANNEL_LIST] = { .type = NLA_U32 },
+	[WIFI_SUBCMD_GET_FEATURE_SET] = { .type = NLA_U32 },
+	[WIFI_SUBCMD_GET_FEATURE_SET_MATRIX] = { .type = NLA_U32 },
+	[WIFI_SUBCMD_SET_PNO_RANDOM_MAC_OUI] = { .type = NLA_U32 },
+	[WIFI_SUBCMD_NODFS_SET] = { .type = NLA_U32 },
+	[WIFI_SUBCMD_SET_COUNTRY_CODE] = { .type = NLA_U32 },
+};
 
 typedef enum {
 	GSCAN_SUBCMD_GET_CAPABILITIES = ANDROID_NL80211_SUBCMD_GSCAN_RANGE_START,
@@ -103,18 +113,45 @@ typedef enum {
 	GSCAN_SUBCMD_SET_SIGNIFICANT_CHANGE_CONFIG,       /* 0x1007 */
 	GSCAN_SUBCMD_ENABLE_FULL_SCAN_RESULTS,            /* 0x1008 */
 	/* Add more sub commands here */
-
+	GSCAN_SUBCMD_MAX
 } GSCAN_SUB_COMMAND;
+
+static const struct nla_policy
+gscan_vendor_test_policy[GSCAN_SUBCMD_MAX + 1] = {
+	[GSCAN_SUBCMD_GET_CAPABILITIES] = { .type = NLA_U32 },
+	[GSCAN_SUBCMD_SET_CONFIG] = { .type = NLA_U32 },
+	[GSCAN_SUBCMD_SET_SCAN_CONFIG] = { .type = NLA_U32 },
+	[GSCAN_SUBCMD_ENABLE_GSCAN] = { .type = NLA_U32 },
+	[GSCAN_SUBCMD_GET_SCAN_RESULTS] = { .type = NLA_U32 },
+	[GSCAN_SUBCMD_SCAN_RESULTS] = { .type = NLA_U32 },
+	[GSCAN_SUBCMD_SET_HOTLIST] = { .type = NLA_U32 },
+	[GSCAN_SUBCMD_SET_SIGNIFICANT_CHANGE_CONFIG] = { .type = NLA_U32 },
+	[GSCAN_SUBCMD_ENABLE_FULL_SCAN_RESULTS] = { .type = NLA_U32 },
+};
 
 typedef enum {
 	RTT_SUBCMD_SET_CONFIG = ANDROID_NL80211_SUBCMD_RTT_RANGE_START,
 	RTT_SUBCMD_CANCEL_CONFIG,
 	RTT_SUBCMD_GETCAPABILITY,
+	RTT_SUBCMD_MAX
 } RTT_SUB_COMMAND;
+
+static const struct nla_policy
+rtt_vendor_test_policy[RTT_SUBCMD_MAX + 1] = {
+	[RTT_SUBCMD_SET_CONFIG] = { .type = NLA_U32 },
+	[RTT_SUBCMD_CANCEL_CONFIG] = { .type = NLA_U32 },
+	[RTT_SUBCMD_GETCAPABILITY] = { .type = NLA_U32 },
+};
 
 typedef enum {
 	LSTATS_SUBCMD_GET_INFO = ANDROID_NL80211_SUBCMD_LSTATS_RANGE_START,
+	LSTATS_SUBCMD_MAX
 } LSTATS_SUB_COMMAND;
+
+static const struct nla_policy
+lstats_vendor_test_policy[LSTATS_SUBCMD_MAX + 1] = {
+	[LSTATS_SUBCMD_GET_INFO] = { .type = NLA_U32 },
+};
 
 typedef enum {
 	GSCAN_EVENT_SIGNIFICANT_CHANGE_RESULTS,
