@@ -455,7 +455,7 @@ static int mtk_wdt_probe(struct platform_device *pdev)
 
 	return 0;
 }
-
+/*
 static void mtk_wdt_shutdown(struct platform_device *pdev)
 {
 	struct mtk_wdt_dev *mtk_wdt = platform_get_drvdata(pdev);
@@ -476,7 +476,7 @@ static int mtk_wdt_remove(struct platform_device *pdev)
 
 	return 0;
 }
-
+*/
 #ifdef CONFIG_PM_SLEEP
 static int mtk_wdt_suspend(struct device *dev)
 {
